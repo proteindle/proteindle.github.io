@@ -1,0 +1,20 @@
+# Raw downloads — hundreds of MB, all reproducible via pipeline/download.py
+data/raw/
+data/_raw_real/
+data/raw_fixture/
+
+# Build intermediates and test output
+data/build/
+*.part
+
+# web/data/proteins.json is deliberately NOT ignored: it is the deployable
+# artifact, and a static host needs it in the repo.
+
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+venv/
+node_modules/
+.vscode/
+.idea/

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Proteindle — guess the human protein</title>
+<meta name="description" content="A daily guessing game for human proteins. Length, conservation depth, localization, function, pathway, chromosome, disease.">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧬</text></svg>">
+</head>
+<body>
+
+<header class="site-head">
+  <h1><span class="logo-mark">🧬</span> Proteindle</h1>
+  <p class="tagline">Guess the human protein. Every column is a clue.</p>
+</header>
+
+<nav class="modes" id="modes" role="tablist" aria-label="Game mode">
+  <button role="tab" data-mode="daily"    class="mode-btn is-active">Daily</button>
+  <button role="tab" data-mode="freeplay" class="mode-btn">Free play</button>
+  <button role="tab" data-mode="hard"     class="mode-btn">Hard</button>
+</nav>
+
+<main>
+
+  <section class="play" id="play">
+    <div class="status-line">
+      <span id="status-text">Loading proteins…</span>
+      <button id="new-round" class="ghost-btn" hidden>New protein</button>
+    </div>
+
+    <div class="search-wrap">
+      <label class="visually-hidden" for="guess-input">Protein or gene name</label>
+      <input id="guess-input" type="text" autocomplete="off" spellcheck="false"
+             placeholder="Type a gene symbol or protein name…" disabled>
+      <button id="guess-btn" class="submit-btn" disabled aria-label="Submit guess">→</button>
+      <ul id="suggestions" class="suggestions" role="listbox" hidden></ul>
+    </div>
+
+    <p class="hint" id="hint"></p>
+  </section>
+
+  <section class="board-wrap" aria-live="polite">
+    <div class="board-scroll">
+      <table class="board" id="board">
+        <thead>
+          <tr>
+            <th scope="col">Protein</th>
+            <th scope="col">Length<span class="th-sub">aa</span></th>
+            <th scope="col">Conserved<span class="th-sub">back to</span></th>
+            <th scope="col">Localization</th>
+            <th scope="col">Function</th>
+            <th scope="col">Pathway</th>
+            <th scope="col">Chr</th>
+            <th scope="col">Disease<span class="th-sub">linked</span></th>
+          </tr>
+        </thead>
+        <tbody id="board-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="legend">
+    <h2>Colour key</h2>
+    <ul>
+      <li><span class="chip correct">✓</span> Exact match</li>
+      <li><span class="chip partial">~</span> Partial — some overlap, or close</li>
+      <li><span class="chip wrong">✗</span> No match</li>
+      <li><span class="chip wrong">↑</span> Answer is higher / more recent</li>
+      <li><span class="chip wrong">↓</span> Answer is lower / more ancient</li>
+    </ul>
+    <p class="legend-note">
+      <strong>Conserved back to</strong> is the deepest branch of the tree of
+      life where this protein still has a recognisable ortholog, from
+      <em>Universal</em> (bacteria, archaea and eukaryotes alike) up to
+      <em>Mammalia</em>. An arrow pointing down means the answer is older
+      than your guess.
+    </p>
+  </section>
+
+</main>
+
+<div class="modal-backdrop" id="modal-backdrop" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <button class="modal-close" id="modal-close" aria-label="Close">×</button>
+    <p class="modal-verdict" id="modal-verdict"></p>
+    <h2 id="modal-title"></h2>
+    <p class="modal-sub" id="modal-sub"></p>
+    <dl class="reveal" id="reveal"></dl>
+    <p class="modal-blurb" id="modal-blurb"></p>
+    <div class="modal-actions">
+      <button id="share-btn" class="primary-btn">Copy result</button>
+      <a id="uniprot-link" class="ghost-btn" target="_blank" rel="noopener">UniProt entry ↗</a>
+      <button id="again-btn" class="ghost-btn" hidden>Play another</button>
+    </div>
+  </div>
+</div>
+
+<footer class="site-foot">
+  <p>
+    Data from UniProt, Reactome, HGNC, NCBI Gene and Gene-Ages.
+    Answers ranked by publication count, so the daily protein is one you
+    have probably met.
+  </p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
