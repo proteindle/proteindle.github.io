@@ -207,14 +207,17 @@ LOCALIZATION_BUCKETS = [
 # Anything that matched nothing above.
 LOCALIZATION_FALLBACK = "Other"
 
-# If a protein ends up with more than this many buckets the annotation is
-# telling us "it is everywhere", which is not a useful clue. Keep the most
-# specific ones and drop the vague ones.
+# Buckets are kept in the order UniProt lists them, because UniProt puts the
+# PRIMARY location first and the incidental ones after.
+#
+# An earlier version reordered by a hand-written "specificity" ranking, on
+# the theory that Mitochondrion is a more interesting clue than Cytoplasm.
+# The result was that TP53 lost Nucleus entirely and came out as
+# "Mitochondrion + ER + Cytoskeleton", EGFR lost Cell membrane, and MTOR —
+# whose first annotation is Lysosome membrane — was labelled Mitochondrion
+# off the back of one minor annotation buried in its CC line. Rarity is not
+# the same as importance. Trust the curator's ordering.
 MAX_LOCALIZATIONS = 3
-LOCALIZATION_SPECIFICITY = [
-    "Secreted", "Mitochondrion", "Golgi", "ER", "Lysosome",
-    "Cytoskeleton", "Cell membrane", "Nucleus", "Cytoplasm", "Other",
-]
 
 
 # ------------------------------------------------------ functional class
@@ -316,6 +319,148 @@ FUNCTIONAL_CLASSES = [
 ]
 
 FUNCTIONAL_FALLBACK = "Other"
+
+# Partial credit for the Function column. Without it the column is pure
+# hit-or-miss: 12% green, 88% red, and only 0.52 bits of feedback — the
+# weakest column on the board. Grouping related classes so a near miss
+# shows amber roughly doubles what the column teaches, and it matches how
+# people actually reason ("some kind of enzyme, then").
+FUNCTION_GROUPS = {
+    "Kinase":               "Enzyme",
+    "Phosphatase":          "Enzyme",
+    "Protease":             "Enzyme",
+    "Enzyme (other)":       "Enzyme",
+
+    "Transcription factor": "Gene expression",
+    "RNA-binding":          "Gene expression",
+
+    "Ion channel":          "Transport",
+    "Transporter":          "Transport",
+
+    "Receptor":             "Signalling",
+    "Signalling":           "Signalling",
+    "Immune":               "Signalling",
+
+    "Structural":           "Structural",
+    "Other":                "Other",
+}
+
+
+# ------------------------------------------------------------ pathways
+
+# Reactome top-level pathways that are filing cabinets rather than biology.
+# "Disease" in particular sat on 41% of the daily pool and simply restates
+# the Disease column, so it was costing a clue slot to say nothing new.
+PATHWAY_EXCLUDE = {
+    "Disease",
+    "Drug ADME",
+}
+
+# Kept per protein. Scoring is set-overlap, so more values means more amber
+# and fewer greens; three made an exact match nearly impossible.
+MAX_PATHWAYS = 2
+
+
+# ----------------------------------------------------------- game rules
+
+# Per mode. 0 means unlimited.
+#
+# The solver simulation says six is plenty — but the solver has the whole
+# database in front of it and filters by exact feedback signature, while a
+# person has to RECALL which proteins fit. That gap is the whole game, and
+# it is not something a simulation can measure. Eight for the daily.
+#
+# Free play and hard are practice: no limit, with the give-up button as the
+# way out. Nobody needs a losing streak in a mode they chose for drilling.
+MAX_GUESSES = {
+    "daily": 8,
+    "freeplay": 0,
+    "hard": 0,
+}
+
+# The first N days of EVERY rotation — the global daily and each field's —
+# are that pool's best-known proteins in fame order; the rest is shuffled.
+#
+# Without this, launch day is whatever the shuffle happened to put first,
+# which on this build was TNFSF13B: the 382nd most-cited protein, and the
+# least memorable of the first ten. Two weeks of proteins everyone knows
+# gives new players a run of wins before the difficulty goes random, which
+# is the window in which they decide whether to come back.
+ONBOARDING_DAYS = 14
+
+# Famous enough that the clue row gives them away on sight, which makes a
+# flat opening puzzle. "Transcription factor, chromosome 17, disease-linked"
+# is p53 to anyone who would be playing this, and a one-guess win on day one
+# is anticlimax, not a hook. These go into the shuffled tail instead — they
+# still come up, just not as the first thing anyone sees.
+ONBOARDING_EXCLUDE = {
+    "TP53",
+}
+
+# One entry per gene symbol, always.
+#
+# UniProt legitimately carries several reviewed entries for some genes —
+# GNAS has four, CDKN2A has p16INK4a and p14ARF as separate proteins. For a
+# guessing game that is unplayable: you type "GNAS", pick one of four
+# identical-looking rows, and get marked wrong for naming the right gene.
+#
+# The automatic rule keeps the entry with the fewest missing columns, then
+# the longest sequence (usually the canonical isoform). Where that picks
+# badly, name the accession you want here. GNAS is the case in point: the
+# longest entry is the XLas isoform, but the protein people mean by "GNAS"
+# is the canonical Gs-alpha.
+CANONICAL_OVERRIDES = {
+    # Longest entry is the XLas isoform; "GNAS" means Gs-alpha.
+    "GNAS":   "P63092",   # 394 aa, GNAS2_HUMAN
+    # The automatic rule kept ARF_HUMAN (p14ARF, 132 aa) because it has
+    # marginally better column coverage. CDKN2A means p16INK4a to almost
+    # everyone, and it sits at rank 49 — squarely in the daily pool.
+    "CDKN2A": "P42771",   # 156 aa, CDN2A_HUMAN
+    # MACF1_HUMAN is the canonical entry; O94854 is a separate isoform
+    # record that happened to score better on coverage.
+    "MACF1":  "Q9UPN3",   # 7388 aa, MACF1_HUMAN
+}
+
+
+# --------------------------------------------------------------- fields
+
+# Reactome's top-level pathways double as "what do you work on?" — they are
+# roughly the granularity at which people describe their own field ("I'm in
+# DNA repair", "I do immunology"), and we already load them.
+
+# Not fields anyone identifies with. "Disease" is a filing cabinet spanning
+# a third of the proteome; "Drug ADME" is pharmacology plumbing; the last
+# one has two members.
+FIELD_EXCLUDE = {
+    "Disease",
+    "Drug ADME",
+    "Digestion and absorption",
+}
+
+# Below this, a daily rotation repeats too soon to be worth offering.
+FIELD_MIN_SIZE = 50
+
+# Above this, a field is really "most of biology" and stops being a
+# usable filter. Immune System has 1,009 members in the 3,000 pool and
+# Signal Transduction 1,006; capped by fame, both become a set of proteins
+# an immunologist or a signalling person would actually recognise. Small
+# fields like DNA Repair (168) are kept whole — a specialist knows the
+# less-famous proteins in their own area, which is the point of the mode.
+FIELD_MAX_POOL = 250
+
+# Reactome's names are accurate and clunky. These are the ones worth
+# rewording for a button.
+FIELD_DISPLAY_NAMES = {
+    "Gene expression (Transcription)":      "Gene expression",
+    "Cellular responses to stimuli":        "Stress responses",
+    "Metabolism of proteins":               "Protein metabolism",
+    "Metabolism of RNA":                    "RNA metabolism",
+    "Transport of small molecules":         "Small-molecule transport",
+    "Organelle biogenesis and maintenance": "Organelle biogenesis",
+    "Extracellular matrix organization":    "Extracellular matrix",
+    "Vesicle-mediated transport":           "Vesicle transport",
+    "Cell-Cell communication":              "Cell-cell communication",
+}
 
 
 # --------------------------------------------------------------- tiers

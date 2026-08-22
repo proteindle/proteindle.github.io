@@ -3,8 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Proteindle — guess the human protein</title>
-<meta name="description" content="A daily guessing game for human proteins. Length, conservation depth, localization, function, pathway, chromosome, disease.">
+<title>Proteindle</title>
+<meta name="description" content="A daily guessing game for human proteins. Pick your field and narrow it down by length, conservation depth, localization, function, pathway and chromosome.">
+<meta name="theme-color" content="#0d1117">
+
+<!-- Link previews. og:url is filled in at deploy time; a wrong one is
+     worse than none, so it is left out rather than guessed. -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="Proteindle">
+<meta property="og:description" content="Guess the human protein. Pick your field — DNA repair, immunology, metabolism — and get a daily puzzle from it.">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Proteindle">
+<meta name="twitter:description" content="Guess the human protein. A daily puzzle from your own field.">
 <link rel="stylesheet" href="style.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧬</text></svg>">
 </head>
@@ -14,6 +24,14 @@
   <h1><span class="logo-mark">🧬</span> Proteindle</h1>
   <p class="tagline">Guess the human protein. Every column is a clue.</p>
 </header>
+
+<div class="field-bar">
+  <button id="field-btn" class="field-chip" aria-haspopup="dialog">
+    <span class="field-chip-label">Field</span>
+    <span class="field-chip-value" id="field-name">Everything</span>
+    <span class="field-chip-caret" aria-hidden="true">&#9662;</span>
+  </button>
+</div>
 
 <nav class="modes" id="modes" role="tablist" aria-label="Game mode">
   <button role="tab" data-mode="daily"    class="mode-btn is-active">Daily</button>
@@ -26,7 +44,10 @@
   <section class="play" id="play">
     <div class="status-line">
       <span id="status-text">Loading proteins…</span>
-      <button id="new-round" class="ghost-btn" hidden>New protein</button>
+      <span class="status-actions">
+        <button id="easier-btn" class="ghost-btn small" hidden>Easier one</button>
+        <button id="new-round" class="ghost-btn small" hidden>New protein</button>
+      </span>
     </div>
 
     <div class="search-wrap">
@@ -38,6 +59,10 @@
     </div>
 
     <p class="hint" id="hint"></p>
+
+    <div class="play-actions">
+      <button id="giveup-btn" class="ghost-btn small" hidden>Give up &amp; reveal</button>
+    </div>
   </section>
 
   <section class="board-wrap" aria-live="polite">
@@ -76,9 +101,30 @@
       <em>Mammalia</em>. An arrow pointing down means the answer is older
       than your guess.
     </p>
+    <p class="legend-note">
+      <strong>Amber</strong> means different things per column: one rung away
+      on the conservation ladder, within 10% on length, an overlapping
+      localization or pathway, or a different function in the same family —
+      guessing a kinase when the answer is a protease gets you amber, because
+      both are enzymes.
+    </p>
   </section>
 
 </main>
+
+<div class="modal-backdrop" id="field-backdrop" hidden>
+  <div class="modal field-modal" role="dialog" aria-modal="true"
+       aria-labelledby="field-title">
+    <button class="modal-close" id="field-close" aria-label="Close">&times;</button>
+    <h2 id="field-title">What do you work on?</h2>
+    <p class="modal-sub">
+      Answers will be drawn from that field, so a specialist gets proteins
+      they actually know &mdash; including the less famous ones. You can
+      change this any time.
+    </p>
+    <div class="field-grid" id="field-grid"></div>
+  </div>
+</div>
 
 <div class="modal-backdrop" id="modal-backdrop" hidden>
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
@@ -104,6 +150,7 @@
   </p>
 </footer>
 
+<script src="scoring.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

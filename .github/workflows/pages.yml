@@ -1,0 +1,62 @@
+# Publish web/ to GitHub Pages.
+#
+# Why a workflow rather than the simpler "deploy from a branch" setting:
+# branch publishing only accepts the repository root or a folder named
+# /docs — arbitrary folders are not supported. Our site lives in web/, and
+# renaming it to docs/ would be a lie about what is in there. A workflow
+# lets the folder keep its real name.
+#
+# Nothing is built here. web/data/proteins.json is committed, so this only
+# uploads the folder. Regenerating the database is a local step:
+#
+#     python pipeline/build.py && git add web/data && git commit && git push
+#
+# One-time setup: repository Settings → Pages → Source → "GitHub Actions".
+# With this workflow, no CNAME file is needed; a custom domain set in
+# Settings governs on its own.
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race. Queue rather than cancel, so a push that
+# lands mid-deploy still ships instead of being silently dropped.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Fail early if the database is missing
+        run: |
+          test -f web/data/proteins.json || {
+            echo "web/data/proteins.json is not committed."
+            echo "Run: python pipeline/build.py, then commit web/data/."
+            exit 1
+          }
+          echo "database: $(wc -c < web/data/proteins.json) bytes"
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

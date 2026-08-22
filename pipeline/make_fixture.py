@@ -12,6 +12,7 @@ make the fixture match reality, watch the test fail, then fix the parser.
 
 import argparse
 import gzip
+import random
 import shutil
 import sys
 from pathlib import Path
@@ -148,6 +149,10 @@ REACTOME_RELATION = [
 ]
 
 REACTOME_NAMES = [
+    ("R-HSA-73894", "DNA Repair", "Homo sapiens"),
+    ("R-HSA-168256", "Immune System", "Homo sapiens"),
+    ("R-HSA-1640170", "Cell Cycle", "Homo sapiens"),
+    ("R-HSA-112316", "Neuronal System", "Homo sapiens"),
     ("R-HSA-162582", "Signal Transduction", "Homo sapiens"),
     ("R-HSA-74160", "Gene expression (Transcription)", "Homo sapiens"),
     ("R-HSA-1430728", "Metabolism", "Homo sapiens"),
@@ -195,28 +200,95 @@ def write_tsv(path, header, rows):
             fh.write("\t".join(str(x) for x in r) + "\n")
 
 
+# The six hand-written entries above test parsing. These synthetic ones
+# test everything that needs a POOL: field pools (which need at least
+# FIELD_MIN_SIZE members), autocomplete ranking, tier cuts, and the daily
+# rotation. Without them the fixture builds a six-protein database in which
+# no field qualifies and half the UI is unreachable.
+SYNTH_COUNT = 400
+SYNTH_PATHWAYS = [
+    ("R-HSA-73894", "DNA Repair"),
+    ("R-HSA-168256", "Immune System"),
+    ("R-HSA-1430728", "Metabolism"),
+    ("R-HSA-1640170", "Cell Cycle"),
+    ("R-HSA-112316", "Neuronal System"),
+]
+SYNTH_LOCS = [
+    "Nucleus", "Cytoplasm", "Cell membrane", "Mitochondrion",
+    "Secreted", "Endoplasmic reticulum", "Golgi apparatus", "Lysosome",
+]
+SYNTH_KEYWORDS = [
+    "Kinase", "Protease", "DNA-binding;Transcription", "Receptor",
+    "Ion channel", "Transport", "Cytoskeleton", "Immunity", "Hydrolase",
+]
+SYNTH_AGES = ["Cellular_organisms", "Euk_Archaea", "Eukaryota",
+              "Opisthokonta", "Eumetazoa", "Vertebrata", "Mammalia"]
+
+
+def synth_rows(rng):
+    """Deterministic filler. Same seed every run, so builds are stable."""
+    uniprot, g2p, ginfo, reactome, hgnc, ages = [], [], [], [], [], []
+
+    for i in range(SYNTH_COUNT):
+        acc = f"Q{9000 + i:04d}"
+        gene = f"SYN{i:03d}"
+        geneid = str(900000 + i)
+        length = rng.choice([80, 150, 240, 375, 512, 780, 1100, 1600, 2400])
+        locs = rng.sample(SYNTH_LOCS, rng.randint(1, 3))
+        kw = rng.choice(SYNTH_KEYWORDS)
+        chrom = rng.choice([str(n) for n in range(1, 23)] + ["X", "Y"])
+        disease = rng.random() < 0.55
+
+        uniprot.append([
+            acc, f"{gene}_HUMAN", gene, "", f"Synthetic protein {i}",
+            str(length), f"{length * 110:,}",
+            "SUBCELLULAR LOCATION: " + ". ".join(locs) + ".",
+            kw, "", "", 
+            (f"DISEASE: Synthetic syndrome {i} [MIM:{600000 + i}]: A made-up "
+             f"disorder.") if disease else "",
+            "Synthetic family", f"{geneid};", f"HGNC:{90000 + i};",
+            f"ENSP{900000 + i};",
+        ])
+
+        # Fame below every real entry, so the hand-written ones stay on top.
+        g2p.append(("9606", geneid, rng.randint(3, 900)))
+        ginfo.append((geneid, gene, f"SYNALT{i}", f"synthetic gene {i}"))
+        hgnc.append((f"HGNC:{90000 + i}", gene,
+                     f"{chrom}q{rng.randint(11, 36)}.{rng.randint(1, 9)}", acc))
+        ages.append((acc, rng.choice(SYNTH_AGES)))
+
+        for sid, name in rng.sample(SYNTH_PATHWAYS, rng.randint(1, 2)):
+            reactome.append((acc, sid, "-", name, "TAS", "Homo sapiens"))
+
+    return uniprot, g2p, ginfo, reactome, hgnc, ages
+
+
 def build_fixture():
     FIXTURE.mkdir(parents=True, exist_ok=True)
 
+    rng = random.Random(1234)
+    s_uni, s_g2p, s_ginfo, s_react, s_hgnc, s_ages = synth_rows(rng)
+
     write_tsv_gz(FIXTURE / "uniprot_human.tsv.gz",
-                 UNIPROT_HEADER, UNIPROT_ROWS)
+                 UNIPROT_HEADER, UNIPROT_ROWS + s_uni)
 
     g2p_rows = []
-    for tax, gene, n in GENE2PUBMED:
+    for tax, gene, n in list(GENE2PUBMED) + list(s_g2p):
         for i in range(n):
             g2p_rows.append((tax, gene, 10_000_000 + i))
     write_tsv_gz(FIXTURE / "gene2pubmed.gz", ["#tax_id", "GeneID",
                                               "PubMed_ID"], g2p_rows)
 
     gi_rows = []
-    for geneid, symbol, syns, desc in GENE_INFO:
+    for geneid, symbol, syns, desc in list(GENE_INFO) + list(s_ginfo):
         gi_rows.append(("9606", geneid, symbol, "-", syns, "-", "-", "-",
                         desc, "protein-coding", symbol, desc, "O", "-",
                         "20260801", "-"))
     write_tsv_gz(FIXTURE / "Homo_sapiens.gene_info.gz",
                  ["#tax_id"] + ["c"] * 15, gi_rows)
 
-    write_tsv(FIXTURE / "UniProt2Reactome_All_Levels.txt", None, REACTOME_MAP)
+    write_tsv(FIXTURE / "UniProt2Reactome_All_Levels.txt", None,
+          list(REACTOME_MAP) + list(s_react))
     write_tsv(FIXTURE / "ReactomePathwaysRelation.txt", None,
               REACTOME_RELATION)
     write_tsv(FIXTURE / "ReactomePathways.txt", None, REACTOME_NAMES)
@@ -224,14 +296,26 @@ def build_fixture():
     # HGNC has 54 columns; only four matter, so pad the rest.
     hgnc_header = ["hgnc_id", "symbol", "location", "uniprot_ids"] + \
                   [f"pad{i}" for i in range(50)]
-    hgnc_rows = [list(r) + [""] * 50 for r in HGNC_ROWS]
+    hgnc_rows = [list(r) + [""] * 50
+                 for r in list(HGNC_ROWS) + list(s_hgnc)]
     write_tsv(FIXTURE / "hgnc_complete_set.txt", hgnc_header, hgnc_rows)
 
+    # Gene-Ages is a pandas dump: the UniProt accession lives in the INDEX
+    # column, which has no name, so the header line starts with a bare
+    # comma. Reproducing that exactly here is the whole point — assuming a
+    # 'UniProt_acc' header is what broke the first real run.
+    age_cols = ["Cellular_organisms", "Euk_Archaea", "Euk+Bac", "Eukaryota",
+                "Opisthokonta", "Eumetazoa", "Vertebrata", "Mammalia"]
     with open(FIXTURE / "main_HUMAN.csv", "w", encoding="utf-8",
               newline="") as fh:
-        fh.write("UniProt_acc,modeAge,NumDBsContributing\n")
-        for acc, age in GENE_AGES:
-            fh.write(f"{acc},{age},13\n")
+        fh.write("," + ",".join(age_cols) +
+                 ",modeAge,NumDBsContributing,NumDBsFiltered,entropy,"
+                 "NodeError,Bimodality,HGT_flag\n")
+        for acc, age in list(GENE_AGES) + list(s_ages):
+            votes = ["0"] * len(age_cols)
+            votes[age_cols.index(age)] = "11"
+            fh.write(f"{acc}," + ",".join(votes) +
+                     f",{age},13,13,0.31,0.04,0.12,False\n")
 
     print(f"Fixture written to {FIXTURE}")
     for p in sorted(FIXTURE.iterdir()):

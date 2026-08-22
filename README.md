@@ -22,6 +22,17 @@ python pipeline/entropy.py     # check the columns actually carry information
 python serve.py
 ```
 
+If a download dies part-way — corporate networks love to do this — just run
+`download.py` again. Finished sources are skipped, half-finished flat files
+resume from the byte they stopped at, and UniProt resumes from the last page
+it completed. Useful flags:
+
+```bash
+python pipeline/download.py --only uniprot     # retry one source
+python pipeline/download.py --page-size 50     # smaller UniProt requests
+python pipeline/download.py --force            # ignore everything on disk
+```
+
 Python 3.8+ and nothing else. No pip install — the pipeline is pure stdlib
 on purpose, so it runs anywhere without a virtualenv.
 
@@ -36,9 +47,9 @@ fetches its database, and browsers block `fetch()` on `file://`.
 |---|---|---|
 | **Length** | numeric ↑↓ | UniProt. Green on exact, amber within 10%. |
 | **Conserved back to** | ordinal ↑↓ | Gene-Ages consensus. The ladder below. |
-| **Localization** | multi | UniProt subcellular location, collapsed to 9 buckets. Amber on partial overlap. |
-| **Function** | single | Rules over UniProt keywords, EC number and protein name. |
-| **Pathway** | multi | Reactome, rolled up to top-level pathways. |
+| **Localization** | multi | UniProt subcellular location, collapsed to 9 buckets **in UniProt's own order** — the curator lists the primary location first. Amber on partial overlap. |
+| **Function** | single | Rules over UniProt keywords, EC number and protein name. Amber when the guess is a different class in the same family (`FUNCTION_GROUPS`). |
+| **Pathway** | multi | Reactome, rolled up to top level, capped at 2. `PATHWAY_EXCLUDE` drops filing-cabinet categories — "Disease" sat on 41% of the pool and merely restated the Disease column. |
 | **Chromosome** | numeric ↑↓ | HGNC cytogenetic location. X→23, Y→24, MT→25 for ordering. |
 | **Disease-linked** | boolean | UniProt curated disease annotations with an OMIM anchor. |
 
@@ -93,7 +104,90 @@ papers cite its gene, and the pools are cut from the top of that list:
 `pipeline/build.py` prints the least famous protein in each tier. If you
 don't recognise the one at the bottom of the daily pool, shrink it.
 
+**One entry per gene symbol.** UniProt carries several reviewed entries for
+some genes — GNAS has four, CDKN2A has p16INK4a and p14ARF separately. Two
+autocomplete rows both reading "NRXN1" is a coin flip the player cannot
+win, so the build keeps one: fewest missing columns, then longest sequence.
+`CANONICAL_OVERRIDES` in `config.py` pins the cases where that picks badly
+(GNAS's longest entry is the XLas isoform, not the Gs-alpha everyone means).
+The build report lists every collapse.
+
 ---
+
+## Fields
+
+On first visit the player is asked what they work on. Picking DNA Repair
+draws every answer from DNA repair — including its own daily rotation, its
+own puzzle number and its own saved progress, all independent of the global
+daily.
+
+The fields are Reactome's top-level pathways, which happen to sit at roughly
+the granularity people use to describe themselves. Three rules shape the
+list (`config.py`):
+
+- `FIELD_EXCLUDE` drops the ones nobody identifies with — "Disease" spans a
+  third of the proteome, "Drug ADME" is plumbing.
+- `FIELD_MIN_SIZE` (50) drops fields whose rotation would repeat too soon.
+- `FIELD_MAX_POOL` (250) caps the giants. Immune System has ~1,000 members
+  and Signal Transduction ~1,000; uncapped they stop being a filter at all.
+  Capping by fame leaves the ones an immunologist would actually recognise.
+
+Field pools are cut from the full 3,000 rather than the famous 365, because
+a specialist knows the less-famous proteins in their own area — that
+domain knowledge is what the mode is for. Within a field, members are
+ordered by (columns missing, fame) before the cap, so complete entries win
+the slots: a daily puzzle with a blank column is a bad puzzle.
+
+Inside a field the Hard tab disappears. The depth tiers only mean something
+for "Everything"; a field pool is already its full depth.
+
+## Launch settings
+
+Two constants in `build.py` are frozen the moment people start playing.
+Changing either renumbers every puzzle, shifts which protein is today's,
+and invalidates every result anyone has shared.
+
+```python
+DAILY_SHUFFLE_SEED = 20260821   # which protein lands on which day
+EPOCH = "2026-08-22"            # the date on which the site shows Daily #1
+```
+
+`ONBOARDING_DAYS` (config.py, 14) makes the first fortnight of **every**
+rotation — global and each field — that pool's best-known proteins in fame
+order, with the rest shuffled behind them. Left to the shuffle, launch day
+was TNFSF13B: the 382nd most-cited protein. Now it is TP53, then EGFR, then
+ERBB2; DNA Repair opens TP53, BRCA1, BRCA2, ATM, MLH1, PARP1. New players
+get a run of wins during the fortnight in which they decide whether to
+come back.
+
+## Easier rounds
+
+Free play has an **Easier one** button. Two things make a protein easier —
+being famous, and being one you have already solved — so it uses both,
+always: the best-known 10% of the current pool (25–100 proteins) plus every
+daily that has already run. Today's puzzle is excluded.
+
+It is a union rather than a switch, and that is the whole point. An earlier
+version used past dailies once ten had run and the best-known before that.
+Measured, day 10 moved the pool from a mean fame rank of 30 to 214 — the
+button got *harder* the day it started doing what it advertised, because
+past dailies are a random sample of the daily pool and are only "easy" in
+the sense that you have seen them. The union ramps smoothly instead: mean
+rank 51 on day one, 113 after two months, with the top 100 always in.
+
+## Guess limits
+
+`MAX_GUESSES` in `config.py` is per mode, and 0 means unlimited:
+
+```python
+MAX_GUESSES = {"daily": 8, "freeplay": 0, "hard": 0}
+```
+
+Free play and hard are for drilling, so they have no limit and a **give up
+& reveal** button instead. The solver simulation argues six is plenty even
+for the daily — but the solver holds the whole database and filters by exact
+feedback signature, while a person has to *recall* which proteins fit. That
+gap is the game, and no simulation measures it.
 
 ## How the daily answer works
 
@@ -103,7 +197,11 @@ The client computes days since the epoch and indexes into it.
 
 Consequences worth knowing:
 
-- Every player sees the same protein without a server.
+- Every player sees the same protein without a server. Field dailies work
+  the same way, from `dailyOrders[fieldKey]`, each shuffled with a seed
+  derived from the field key via `zlib.crc32` — **not** Python's `hash()`,
+  which is salted per process and would silently change everyone's puzzle
+  on every rebuild.
 - A rebuild does not change tomorrow's answer, as long as
   `DAILY_SHUFFLE_SEED` and `EPOCH` in `build.py` stay put. **Do not change
   them after launch.**
@@ -116,18 +214,25 @@ Consequences worth knowing:
 
 ```
 pipeline/
-  config.py         URLs, the conservation ladder, classification rules, tiers
+  config.py         URLs, conservation ladder, classification rules, tiers
   download.py       fetch every source into data/raw/
   parsers.py        one parser per source, all keyed to UniProt accession
   build.py          join, rank by fame, cut tiers, emit the database
-  entropy.py        per-column information content — run this after any change
-  make_fixture.py   tiny fake raw files for testing without downloading
+  scoring.py        Python mirror of web/scoring.js
+  entropy.py        per-column value and feedback spread
+  simulate.py       play thousands of rounds; how hard is it really?
+  bundle.py         fold the whole game into one self-contained HTML file
+  make_fixture.py   fake raw files + 400 synthetic proteins, for testing
+                    field pools and tier cuts without the 400 MB download
   test_classify.py  regression tests for the annotation rules
+  test_download.py  retry/resume against a deliberately hostile server
+  test_scoring.py   Python scoring vs JS scoring, via Node
   playtest.py       headless browser run through a real round
 web/
   index.html
   style.css
-  app.js
+  scoring.js        the comparison rules — one definition, shared
+  app.js            everything else
   data/proteins.json    generated; committed, since a static host needs it
 ```
 
@@ -135,8 +240,24 @@ web/
 
 ```bash
 python pipeline/test_classify.py    # annotation rules
+python pipeline/test_download.py    # retry, resume and pagination logic
+python pipeline/test_scoring.py     # Python scoring == JS scoring
 python pipeline/playtest.py         # the game itself, in a real browser
 ```
+
+`test_scoring.py` matters more than it looks. The comparison rules exist
+twice — `web/scoring.js` for the game, `pipeline/scoring.py` for the
+offline analysis — and every tuning decision comes from the Python side. If
+the two drift, the simulator is measuring a game nobody is playing. The test
+runs both over 4,000 real protein pairs through Node and demands identical
+output.
+
+`test_download.py` runs against a local server that deliberately misbehaves
+— truncating responses mid-body, failing a page once, honouring Range only
+on the second attempt. It exists because UniProt's `/stream` endpoint really
+does drop connections, and because `http.client.IncompleteRead` subclasses
+`HTTPException` rather than `OSError`, so a narrow `except (URLError,
+IOError)` silently misses it and kills the whole run.
 
 `test_classify.py` is a list of bugs that actually happened — `actin`
 matching "inter**actin**g protein", `antigen` filing TP53 under Immune. When
@@ -147,18 +268,54 @@ there first, then fix the rule.
 
 ## Tuning the game
 
-**Columns that don't split the pool are decoration.** `entropy.py` reports
-bits per column and flags any where one value dominates:
+### Is a column pulling its weight?
+
+`entropy.py` answers this, and it reports two different things because they
+answer two different questions.
+
+**Value spread** is how the column varies across the pool, reported as a
+percentage of the maximum a column with that many distinct values could
+carry. Raw bits are not comparable across columns: a yes/no column tops out
+at exactly 1 bit, so judging Disease against a 23-value Chromosome column on
+raw bits is meaningless. The first version of this script did exactly that
+and flagged a near-perfect 62/38 binary split as "THIN".
+
+**Feedback spread** is what the player actually learns — over random
+(guess, answer) pairs, how often the column comes back green, amber or red,
+and how many bits that carries. This is the one to tune on.
 
 ```
-  Column           bits  values                  top value   share
-  Conservation     2.31       7               Eumetazoa        31%
-  Localization     2.88      24      Nucleus + Cytoplasm       18%
-! Disease          0.94       2                      Yes        63%
+  Column           green   amber     red   bare   bits   verdict
+  Conservation    20.6%   26.5%   52.9%     0%   2.26   STRONG
+  Function        11.6%   15.3%   73.1%    73%   1.10   ok
+  Chromosome       4.9%    0.0%   95.1%     0%   1.23   ok
 ```
 
-Under ~1 bit means the column is barely earning its slot. Over 80% on one
-value means players learn almost nothing from it.
+The `bare` column is the share of feedback that is red **with no arrow** — a
+cell saying only "not this". Red *with* an arrow still narrows the range, so
+Chromosome can be 95% red and still be one of the strongest columns. An
+earlier version counted all red as uninformative and flagged it for removal.
+
+### Is the game the right difficulty?
+
+`simulate.py` plays thousands of real rounds and reports how many guesses it
+takes, under three strategies: `famous` (always guess the most-cited
+consistent candidate — closest to how a person plays), `random` (uniform
+among consistent candidates), and `greedy` (minimise expected remaining
+candidates — near-optimal).
+
+Read the output with one caveat firmly in mind: the solver has the whole
+database in front of it and filters by exact feedback signature. A human
+has to *recall* which proteins fit. So the simulator measures **how much
+information the board carries**, not how hard the game feels. On the current
+data every strategy finishes in two to four guesses, which says the columns
+are collectively very informative and none of them is dead weight — it does
+not say a person will win in three.
+
+**Guess limit** is `MAX_GUESSES` in `config.py`, baked into
+`proteins.json` at build time and read by the game. It is 6. It was 8 until
+the simulator showed that even random-but-consistent play never needed more
+than four, which made losing essentially impossible and drained the tension.
 
 **Classification rules** live in `config.py` as
 `(class, keyword patterns, EC prefixes, name patterns)`. Three passes run
@@ -172,17 +329,105 @@ there hijacks whole classes.
 
 ---
 
+## Mobile
+
+The board stays wider than a phone screen and scrolls sideways. Cramming
+seven clue columns into 390px makes all seven unreadable, so instead the
+**gene column is pinned** — scroll the clues horizontally and you always
+know which guess you are looking at — and a fade on the trailing edge shows
+there is more to the right. Values wrap rather than clip, with `break-word`
+rather than `anywhere` (the latter produced "Signal Transductio / n").
+Tap targets clear 40px.
+
+Two CSS traps worth remembering, both of which bit here:
+
+- A rule inside `@media` does **not** outrank a later rule outside it.
+  Specificity ties break on source order, media query or not, so the mobile
+  overrides sit at the end of the file.
+- The `hidden` attribute is only `display: none` in the UA stylesheet. Any
+  class that sets `display` silently defeats it — `.modal-backdrop` set
+  `display: grid` and left the overlay permanently covering the page. There
+  is a `[hidden] { display: none !important }` rule near the top now.
+
 ## Deploying
 
-It is a static folder. Push `web/` anywhere:
+### One file
 
-- **GitHub Pages** — set Pages to serve `/web`, done.
-- **Netlify / Vercel** — publish directory `web`, no build command.
-- **Anything else** — `rsync -a web/ you@host:/var/www/proteindle/`
+```bash
+python pipeline/bundle.py            # -> web/proteindle.html
+```
 
-The only thing needing a server is a global play counter, which nothing
-currently depends on. If you add one, keep it behind a single module so the
-game still works when it is unreachable.
+Inlines the CSS, JS and database into a single self-contained page. Because
+nothing is fetched, it works straight off `file://` too — mail it, drop it
+on any host, open it from disk.
+
+`--artifact` emits body content only, for hosts that supply their own
+document skeleton.
+
+### GitHub Pages
+
+`.github/workflows/pages.yml` publishes `web/` on every push to `main`.
+
+The workflow exists because **branch-based publishing only accepts the
+repository root or a folder named `/docs`** — arbitrary folders are not
+supported, so "point Pages at `web/`" is not an option. Renaming `web/` to
+`docs/` would work and needs no workflow; it just misdescribes the folder.
+
+One-time setup: Settings → Pages → Source → **GitHub Actions**. Then:
+
+```bash
+git remote add origin https://github.com/<you>/proteindle.git
+git push -u origin main
+```
+
+Nothing is built in CI. `web/data/proteins.json` is committed, so a data
+refresh is a local step:
+
+```bash
+python pipeline/build.py
+git add web/data && git commit -m "Refresh database" && git push
+```
+
+### A nicer URL
+
+`https://<you>.github.io/proteindle/` is what you get by default. Two ways
+to do better:
+
+**Free.** Create a GitHub *organisation* named `proteindle` and put the repo
+in it as `proteindle.github.io`. Organisation sites work exactly like user
+sites, so that serves at **`https://proteindle.github.io`** — no repo path,
+no cost, no DNS.
+
+**Own domain** (~€10–15/yr). Buy it, then in Settings → Pages set the custom
+domain — GitHub writes the `CNAME` file itself, and with an Actions workflow
+no `CNAME` file is needed at all. DNS at your registrar:
+
+| Type | Name | Value |
+|---|---|---|
+| A | `@` | `185.199.108.153` |
+| A | `@` | `185.199.109.153` |
+| A | `@` | `185.199.110.153` |
+| A | `@` | `185.199.111.153` |
+| AAAA | `@` | `2606:50c0:8000::153` … `8003::153` |
+| CNAME | `www` | `<you>.github.io` |
+
+If your registrar supports `ALIAS`/`ANAME` at the apex, use that pointing at
+`<you>.github.io` instead of the four A records — it survives GitHub
+changing its IPs.
+
+Verify the domain first (account Settings → Pages → Verify), *before*
+adding it to the repo: an unverified domain on a disabled Pages site is a
+takeover risk. HTTPS is Let's Encrypt and automatic, but "Enforce HTTPS" is
+a checkbox you tick once the certificate issues — allow up to an hour, and
+make sure no stray A/CNAME records on `@` are left over, since those block
+issuance.
+
+### Anywhere else
+
+It is a static folder. `rsync -a web/ you@host:/var/www/proteindle/`, or
+upload the single file from `pipeline/bundle.py`. Nothing needs a server. If
+you add a global play counter, keep it behind one module so the game still
+works when it is unreachable.
 
 ---
 

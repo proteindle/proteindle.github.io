@@ -39,6 +39,32 @@ class QuietHandler(SimpleHTTPRequestHandler):
         pass
 
 
+def dismiss(page, tries=6):
+    """
+    Close any open overlay and keep it closed.
+
+    The finished-daily reveal re-opens on a 250 ms timer after load, so a
+    single Escape can fire before the modal even exists and the next click
+    then hits the backdrop instead of the button it wanted.
+    """
+    clear_streak = 0
+    for _ in range(tries * 2):
+        page.wait_for_timeout(200)
+        open_ids = [i for i in ("modal-backdrop", "field-backdrop")
+                    if page.is_visible(f"#{i}")]
+        if open_ids:
+            clear_streak = 0
+            page.keyboard.press("Escape")
+            continue
+        # Two consecutive clear reads, 200 ms apart, so a reveal still
+        # sitting on its timer has had time to appear and be dismissed.
+        clear_streak += 1
+        if clear_streak >= 2:
+            return True
+    return not (page.is_visible("#modal-backdrop")
+                or page.is_visible("#field-backdrop"))
+
+
 def serve():
     handler = partial(QuietHandler, directory=str(WEB))
     httpd = ThreadingHTTPServer(("127.0.0.1", PORT), handler)
@@ -77,7 +103,25 @@ def main():
         page.goto(f"http://127.0.0.1:{PORT}/index.html")
         page.wait_for_selector("#guess-input:not([disabled])", timeout=8000)
 
-        print("load\n")
+        print("first visit\n")
+        # No stored field yet, so the picker must be the first thing shown.
+        check("field picker opens on a first visit",
+              page.is_visible("#field-backdrop"))
+        opts = page.query_selector_all("#field-grid .field-option")
+        check("picker lists Everything plus the fields", len(opts) >= 4,
+              f"{len(opts)} options")
+        first = page.inner_text("#field-grid .field-option:first-child")
+        check("Everything is offered first", "Everything" in first, first)
+
+        page.click('#field-grid .field-option[data-key=""]')
+        page.wait_for_timeout(350)
+        check("choosing a field closes the picker",
+              not page.is_visible("#field-backdrop"))
+        check("the chip reflects the choice",
+              page.inner_text("#field-name").strip() == "Everything",
+              page.inner_text("#field-name"))
+
+        print("\nload\n")
         check("database loads and input enables", True)
         status = page.inner_text("#status-text")
         check("status line shows the daily number", "Daily #" in status, status)
@@ -194,18 +238,101 @@ def main():
         check("daily progress survives a reload", len(rows_after) >= 2,
               f"{len(rows_after)} rows after reload")
 
+        # ------------------------------------------------------- give up
+        print("\ngive up\n")
+        check("overlays can be dismissed", dismiss(page))
+        page.click('.mode-btn[data-mode="freeplay"]')
+        page.wait_for_timeout(350)
+
+        check("give-up is hidden before the first guess",
+              not page.is_visible("#giveup-btn"))
+        st = page.inner_text("#status-text")
+        check("free play advertises no guess limit", "no limit" in st, st)
+
+        page.fill("#guess-input", proteins[0]["g"])
+        page.wait_for_timeout(160)
+        page.press("#guess-input", "Enter")
+        page.wait_for_timeout(500)
+
+        if page.is_visible("#modal-backdrop"):        # lucky first guess
+            page.keyboard.press("Escape")
+            page.click("#new-round")
+            page.wait_for_timeout(300)
+            page.fill("#guess-input", proteins[0]["g"])
+            page.wait_for_timeout(160)
+            page.press("#guess-input", "Enter")
+            page.wait_for_timeout(500)
+
+        check("give-up appears once a guess is on the board",
+              page.is_visible("#giveup-btn"))
+        page.click("#giveup-btn")
+        page.wait_for_timeout(500)
+        check("give-up opens the reveal", page.is_visible("#modal-backdrop"))
+        check("verdict says revealed, not lost",
+              page.inner_text("#modal-verdict").strip().lower() == "revealed",
+              page.inner_text("#modal-verdict"))
+        check("input is locked after giving up",
+              page.get_attribute("#guess-input", "disabled") is not None)
+        dismiss(page)
+
+        # ---------------------------------------------------- field mode
+        print("\nfields\n")
+        field_keys = [f["key"] for f in data.get("fields", [])]
+        if field_keys:
+            dismiss(page)
+            page.click("#field-btn")
+            page.wait_for_timeout(250)
+            check("the chip reopens the picker",
+                  page.is_visible("#field-backdrop"))
+            page.click(f'#field-grid .field-option[data-key="{field_keys[0]}"]')
+            page.wait_for_timeout(400)
+
+            label = next(f["label"] for f in data["fields"]
+                         if f["key"] == field_keys[0])
+            check("chip shows the chosen field",
+                  page.inner_text("#field-name").strip() == label,
+                  page.inner_text("#field-name"))
+            check("Hard tab is hidden inside a field",
+                  not page.is_visible('.mode-btn[data-mode="hard"]'))
+
+            page.click('.mode-btn[data-mode="daily"]')
+            page.wait_for_timeout(350)
+            st = page.inner_text("#status-text")
+            check("daily is labelled with the field",
+                  label.lower() in st.lower(), st)
+
+            in_field = {p["a"] for p in proteins
+                        if field_keys[0] in (p.get("fld") or [])}
+            answer = page.evaluate("() => state.target.a")
+            check("the answer comes from that field", answer in in_field,
+                  f"{answer} not among {len(in_field)} field members")
+
+            # A field daily must not inherit the global daily's saved state.
+            page.reload()
+            page.wait_for_selector("#guess-input", timeout=8000)
+            page.wait_for_timeout(600)
+            check("the field choice survives a reload",
+                  page.inner_text("#field-name").strip() == label,
+                  page.inner_text("#field-name"))
+            check("no picker on a return visit",
+                  not page.is_visible("#field-backdrop"))
+            check("the field daily starts fresh, not with the global board",
+                  len(page.query_selector_all("#board-body tr")) == 0)
+
+            dismiss(page)
+            page.click("#field-btn")
+            page.wait_for_timeout(250)
+            page.click('#field-grid .field-option[data-key=""]')
+            page.wait_for_timeout(400)
+            check("switching back to Everything restores Hard",
+                  page.is_visible('.mode-btn[data-mode="hard"]'))
+
         # ----------------------------------------------------- other modes
         print("\nmodes\n")
-        # A finished daily re-opens its reveal on load. The backdrop covers
-        # the whole viewport, so the mode buttons are genuinely unreachable
-        # until it is dismissed — check the dismissal works, then move on.
-        check("finished daily re-opens its reveal on load",
-              page.is_visible("#modal-backdrop"))
-        page.keyboard.press("Escape")
-        page.wait_for_timeout(200)
-        check("Escape dismisses the reveal",
-              not page.is_visible("#modal-backdrop"))
-
+        # Returning to a finished daily re-opens its reveal, and the backdrop
+        # covers the whole viewport, so the mode buttons are genuinely
+        # unreachable until it is gone. Same for a real player.
+        check("the reveal can be cleared before switching mode", dismiss(page))
         page.click('.mode-btn[data-mode="freeplay"]')
         page.wait_for_timeout(400)
         check("free play resets the board",

@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from parsers import (  # noqa: E402
     classify_function, clean_location, bucket_locations,
-    _chromosome_from_locus, _disease_names,
+    _chromosome_from_locus, _disease_names, short_protein_name,
 )
 
 FAILED = []
@@ -118,13 +118,68 @@ check("Note= tail is dropped",
 check("mitochondrion buckets correctly",
       bucket_locations(["Mitochondrion inner membrane"]),
       ["Mitochondrion"])
-check("bucket order is most-specific-first",
+# UniProt's own ordering is preserved: the curator puts the primary
+# location first. An earlier version reordered by a hand-written
+# "specificity" ranking and produced the three disasters below.
+check("UniProt ordering is preserved",
       bucket_locations(["Nucleus", "Cytoplasm", "Secreted"]),
-      ["Secreted", "Nucleus", "Cytoplasm"])
+      ["Nucleus", "Cytoplasm", "Secreted"])
+
+# TP53 used to come out as Mitochondrion + ER + Cytoskeleton, with Nucleus
+# dropped entirely, because reordering promoted three incidental
+# annotations above the two that matter.
+check("TP53 keeps Nucleus",
+      bucket_locations(["Cytoplasm", "Nucleus", "Nucleus, PML body",
+                        "Endoplasmic reticulum", "Mitochondrion matrix",
+                        "Cytoplasm, cytoskeleton, microtubule organizing "
+                        "center, centrosome"]),
+      ["Cytoplasm", "Nucleus", "ER"])
+
+# EGFR used to lose Cell membrane — for a cell-surface receptor.
+check("EGFR leads with Cell membrane",
+      bucket_locations(["Cell membrane", "Endoplasmic reticulum membrane",
+                        "Golgi apparatus membrane", "Nucleus membrane",
+                        "Endosome"]),
+      ["Cell membrane", "ER", "Golgi"])
+
+# MTOR was labelled Mitochondrion off one minor annotation, when its first
+# and defining location is the lysosomal membrane.
+check("MTOR leads with Lysosome",
+      bucket_locations(["Lysosome membrane", "Cytoplasmic side",
+                        "Endoplasmic reticulum membrane",
+                        "Golgi apparatus membrane", "Mitochondrion outer "
+                        "membrane"]),
+      ["Lysosome", "Cytoplasm", "ER"])
+
+check("one location maps to exactly one bucket",
+      bucket_locations(["Cytoplasm, cytoskeleton"]), ["Cytoskeleton"])
+check("duplicates collapse",
+      bucket_locations(["Nucleus", "Nucleus, nucleolus", "Nucleus speckle"]),
+      ["Nucleus"])
+check("the cap is respected",
+      len(bucket_locations(["Secreted", "Nucleus", "Cytoplasm",
+                            "Mitochondrion", "Golgi"])), 3)
 check("unknown location falls back",
       bucket_locations(["Virion"]), ["Other"])
 check("no annotation yields no buckets",
       bucket_locations([]), [])
+
+
+print("\nprotein name shortening\n")
+
+check("parenthesised alternatives are cut",
+      short_protein_name("Epidermal growth factor receptor (EC 2.7.10.1) "
+                         "(Proto-oncogene c-ErbB-1)"),
+      "Epidermal growth factor receptor")
+# INS rendered as "Insulin [Cleaved into: Insulin B chain; Insuli..." on the
+# board until the shortener learned about square brackets too.
+check("processed-chain lists are cut",
+      short_protein_name("Insulin [Cleaved into: Insulin B chain; "
+                         "Insulin A chain]"),
+      "Insulin")
+check("a plain name is untouched",
+      short_protein_name("Cellular tumor antigen p53"),
+      "Cellular tumor antigen p53")
 
 
 print("\ndisease\n")

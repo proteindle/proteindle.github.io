@@ -18,8 +18,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import (  # noqa: E402
     RAW, UNIPROT_FIELDS, GENE_AGES_MAP, EGGNOG_LEVEL_MAP,
+    PATHWAY_EXCLUDE, MAX_PATHWAYS, FIELD_EXCLUDE,
     LOCALIZATION_BUCKETS, LOCALIZATION_FALLBACK, MAX_LOCALIZATIONS,
-    LOCALIZATION_SPECIFICITY, FUNCTIONAL_CLASSES, FUNCTIONAL_FALLBACK,
+    FUNCTIONAL_CLASSES, FUNCTIONAL_FALLBACK,
 )
 
 csv.field_size_limit(1 << 30)
@@ -28,6 +29,10 @@ ECO_RE = re.compile(r"\{ECO:[^}]*\}")
 NOTE_RE = re.compile(r"\bNote=.*$", re.DOTALL)
 MIM_RE = re.compile(r"\[MIM:\d+\]")
 ENSP_RE = re.compile(r"ENSP\d+")
+# UniProtKB accession grammar, per uniprot.org/help/accession_numbers
+ACCESSION_RE = re.compile(
+    r"^[OPQ][0-9][A-Z0-9]{3}[0-9]$|^[A-NR-Z][0-9]([A-Z][A-Z0-9]{2}[0-9]){1,2}$"
+)
 
 
 def _open(path):
@@ -71,18 +76,39 @@ def clean_location(raw):
     return out
 
 
+def short_protein_name(protein_name):
+    """
+    UniProt packs extras after the real name: alternatives in parentheses,
+    and processed chains in square brackets, e.g. "Insulin [Cleaved into:
+    Insulin B chain; Insulin A chain]". Cut at the first of either.
+    """
+    return re.split(r"\s*[(\[]", protein_name or "")[0].strip()
+
+
 def bucket_locations(location_strings):
-    """Collapse UniProt's free text onto our fixed bucket list."""
-    hits = set()
-    blob = " ; ".join(location_strings).lower()
-    if not blob.strip():
+    """
+    Collapse UniProt's free text onto our fixed bucket list, preserving
+    UniProt's ordering so the primary location comes first.
+
+    Each location string maps to at most one bucket — the first that
+    matches, per LOCALIZATION_BUCKETS order, which is arranged
+    most-specific-first so 'Cytoplasm, cytoskeleton' lands on Cytoskeleton
+    rather than Cytoplasm.
+    """
+    if not location_strings:
         return []
-    for bucket, patterns in LOCALIZATION_BUCKETS:
-        if any(pat in blob for pat in patterns):
-            hits.add(bucket)
-    if not hits:
+
+    ordered = []
+    for loc in location_strings:
+        low = loc.lower()
+        for bucket, patterns in LOCALIZATION_BUCKETS:
+            if any(pat in low for pat in patterns):
+                if bucket not in ordered:
+                    ordered.append(bucket)
+                break
+
+    if not ordered:
         return [LOCALIZATION_FALLBACK]
-    ordered = [b for b in LOCALIZATION_SPECIFICITY if b in hits]
     return ordered[:MAX_LOCALIZATIONS]
 
 
@@ -194,8 +220,7 @@ def parse_uniprot():
             ensps = ENSP_RE.findall(get(row, "xref_ensembl"))
 
             protein_name = get(row, "protein_name")
-            # UniProt packs alternatives in parentheses; keep the first.
-            short_name = re.split(r"\s*\(", protein_name)[0].strip()
+            short_name = short_protein_name(protein_name)
 
             out[acc] = {
                 "accession": acc,
@@ -333,15 +358,30 @@ def parse_reactome():
             if not sid.startswith("R-HSA-"):
                 continue
             top = to_top(sid)
-            acc_pathways[acc].add(names.get(top, label))
+            name = names.get(top, label)
+            acc_pathways[acc].add(name)
 
-    # Trim: a protein in eight top-level pathways is not giving a clue.
-    out = {}
+    # Two different products from the same walk:
+    #
+    #   display — the Pathway clue column. Excludes filing-cabinet
+    #             categories and is capped, because a cell listing eight
+    #             pathways is not a clue.
+    #   fields  — every top-level pathway the protein belongs to, used to
+    #             filter answers by the player's field. Uncapped, because a
+    #             DNA-repair person should get DNA-repair proteins whether
+    #             or not that pathway made the protein's top two.
+    display, fields = {}, {}
     for acc, paths in acc_pathways.items():
-        ordered = sorted(paths)
-        out[acc] = ordered[:3]
-    print(f"  [ok  ] Reactome: pathways for {len(out)} accessions")
-    return out
+        keep = sorted(p for p in paths if p not in PATHWAY_EXCLUDE)
+        if keep:
+            display[acc] = keep[:MAX_PATHWAYS]
+        usable = sorted(p for p in paths if p not in FIELD_EXCLUDE)
+        if usable:
+            fields[acc] = usable
+
+    print(f"  [ok  ] Reactome: pathways for {len(display)} accessions, "
+          f"field tags for {len(fields)}")
+    return display, fields
 
 
 # ---------------------------------------------------------------- HGNC
@@ -400,14 +440,30 @@ def parse_gene_ages():
     unmapped = defaultdict(int)
     with _open(path) as fh:
         reader = csv.DictReader(fh)
+        fields = reader.fieldnames or []
+
+        # The published file is a pandas dump: the accession sits in the
+        # index column, which has no name, so the header line begins with a
+        # bare comma. Look for a named column first in case that ever
+        # changes, then fall back to the unnamed first column.
         acc_col = None
-        for cand in ("UniProt_acc", "UniProt", "uniprot", "Entry"):
-            if reader.fieldnames and cand in reader.fieldnames:
+        for cand in ("UniProt_acc", "UniProt", "uniprot", "Entry", "acc"):
+            if cand in fields:
                 acc_col = cand
                 break
-        if acc_col is None:
-            acc_col = reader.fieldnames[0]
+        if acc_col is None and fields and not (fields[0] or "").strip():
+            acc_col = fields[0]          # the unnamed index column
+        if acc_col is None and fields:
+            acc_col = fields[0]
             print(f"  [warn] Gene-Ages: guessing accession column {acc_col!r}")
+        if acc_col is None:
+            print("  [warn] Gene-Ages: no columns found")
+            return {}
+
+        if "modeAge" not in fields:
+            print(f"  [warn] Gene-Ages: no 'modeAge' column. Header is "
+                  f"{fields[:6]}")
+            return {}
 
         for row in reader:
             acc = (row.get(acc_col) or "").strip()
@@ -419,6 +475,14 @@ def parse_gene_ages():
                 out[acc] = key
             else:
                 unmapped[mode] += 1
+
+    # Cheap sanity check that we read accessions and not, say, row numbers.
+    sample = list(out)[:200]
+    looks_right = sum(1 for a in sample if ACCESSION_RE.match(a))
+    if sample and looks_right < len(sample) * 0.8:
+        print(f"  [warn] Gene-Ages: column {acc_col!r} does not look like "
+              f"UniProt accessions (e.g. {sample[:3]}) — conservation will "
+              f"not join")
 
     if unmapped:
         print(f"  [warn] Gene-Ages: unmapped modeAge values {dict(unmapped)}")
