@@ -130,6 +130,50 @@ unaffected, since their top 250 by fame sit inside the 3,000 either way.
 
 ---
 
+## Browse and Train
+
+The game is a guessing game, but the database underneath it is a study
+resource, and a Reddit comment asked for exactly that: "would be nice if we
+could see the list of proteins in each category with their attributes, like
+you should be able to study them." Two views answer it.
+
+**Browse** is the whole database as a table — all 20,190 reviewed human
+proteins, not just the 4,331 that can be answers, with every attribute the
+game scores on. Filter by function, conservation, localization, field,
+chromosome or disease link, search names and aliases, sort any column, and
+export the result as CSV. Rows render a hundred at a time, because twenty
+thousand `<tr>` elements is not a table, it is a stall.
+
+**Train** turns any selection into spaced repetition. Filter Browse to what
+you care about, press *Study these*, and it becomes a deck.
+
+Scheduling is **Leitner**, not SM-2: five boxes with fixed intervals of 1,
+3, 7, 21 and 60 days, and a missed card drops to box 1. The appeal over a
+proper ease-factor algorithm is that you can see why a card came back, which
+matters for an audience that will reasonably want to know. Progress is kept
+per deck in `localStorage`, so several decks can be on the go at once, and
+there is a daily streak.
+
+A card is a **protein**, not a protein-column pair. Asking "TP53 —
+function?" and "TP53 — chromosome?" as separate cards would multiply a
+200-protein deck into 1,400 and make it feel endless; instead the column is
+drawn fresh each time the protein comes up, so a protein you actually know
+has to survive questions from several angles. Which columns can be asked,
+and in which direction, are settings.
+
+Two directions ship on by default and mix: *protein → attribute* ("TP53 —
+what is its function?") and *attributes → protein*, which is the game's own
+logic as a flashcard. Closed columns — function, conservation, chromosome,
+disease, length — are multiple choice and graded objectively; open-ended
+ones — localization, pathway, family — are self-graded flips.
+
+The attributes → protein direction ranks its clues by how few cards in the
+deck share that value, and drops any attribute the whole deck has in common.
+Without that, a deck filtered to Function = Chromatin opens every card with
+"Function: Chromatin", which is a wasted line and no help at all.
+
+---
+
 ## Running it yourself
 
 ```bash
@@ -245,7 +289,17 @@ python pipeline/test_classify.py    # annotation rules
 python pipeline/test_download.py    # retry, resume and pagination
 python pipeline/test_scoring.py     # Python scoring == JS scoring
 python pipeline/playtest.py         # the game itself, in a real browser
+python pipeline/smoke_study.py      # Browse and Train, in a real browser
+python pipeline/smoke_study.py --bundle   # ...and in the single-file build
 ```
+
+`smoke_study.py` is run twice on purpose. In the split build `init()` awaits
+`fetch`, so `study.js` has been parsed by the time the database is ready; in
+the single-file build the data is inlined, `init()` never awaits, and the
+ready event fires before `study.js` exists. Browse would have been empty in
+exactly the build meant to work off a USB stick. `study.js` therefore checks
+for an already-initialised app as well as listening, and the `--bundle` run
+is what keeps that honest.
 
 The comparison rules exist twice — `web/scoring.js` for the game,
 `pipeline/scoring.py` for the offline analysis — and every tuning decision

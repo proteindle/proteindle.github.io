@@ -877,3 +877,534 @@ main { max-width: 60rem; margin: 0 auto; }
   .modal-close { font-size: 1.9rem; padding: .35rem .6rem; }
   .submit-btn { min-height: 2.9rem; }
 }
+
+/* ==================================================================
+   Browse and Train (study.js)
+   ================================================================== */
+
+/* The views are toggled with the `hidden` attribute; several rules below
+   set display on these elements, so hidden needs to outrank them. */
+[hidden] { display: none !important; }
+
+.views {
+  display: flex;
+  justify-content: center;
+  gap: .25rem;
+  max-width: 60rem;
+  margin: 0 auto .75rem;
+  padding: .25rem;
+  border-bottom: 1px solid var(--border-soft);
+  padding-bottom: .75rem;
+}
+
+.view-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: .9rem;
+  padding: .4rem 1.1rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background .12s, color .12s, border-color .12s;
+}
+
+.view-btn:hover { color: var(--text); background: var(--bg-raised); }
+
+.view-btn.is-active {
+  background: var(--bg-raised);
+  border-color: var(--border);
+  color: var(--text);
+  font-weight: 600;
+}
+
+body.wide main { max-width: 82rem; }
+
+.view-intro {
+  max-width: 42rem;
+  margin: 0 auto 1.25rem;
+  color: var(--text-dim);
+  font-size: .9rem;
+  line-height: 1.6;
+  text-align: center;
+}
+
+/* ------------------------------------------------------------ filters */
+
+.filters {
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+  margin-bottom: 1rem;
+}
+
+.filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .6rem;
+  align-items: flex-end;
+}
+
+.filter {
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+  flex: 1 1 9rem;
+  min-width: 0;
+}
+
+.filter.f-search { flex: 2 1 14rem; }
+
+.filter > span {
+  font-size: .68rem;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.filter input,
+.filter select {
+  appearance: none;
+  width: 100%;
+  font: inherit;
+  font-size: .875rem;
+  color: var(--text);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: .45rem .6rem;
+}
+
+.filter select {
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-faint) 50%),
+    linear-gradient(135deg, var(--text-faint) 50%, transparent 50%);
+  background-position: right 1rem center, right .65rem center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 1.8rem;
+}
+
+.filter input:focus,
+.filter select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.filter-row > .ghost-btn { flex: 0 0 auto; }
+
+.browse-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: .5rem;
+}
+
+.browse-count { font-size: .85rem; color: var(--text-dim); }
+.browse-actions { display: flex; gap: .5rem; }
+.browse-more { text-align: center; margin: 1rem 0 2rem; }
+
+/* ------------------------------------------------------- browse table */
+
+.browse-table { min-width: 64rem; border-spacing: 0; }
+
+.browse-table thead th {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg);
+  padding: .5rem .6rem;
+  text-align: left;
+}
+
+.browse-table thead th:hover { color: var(--text); }
+.browse-table thead th.sorted { color: var(--accent); }
+.browse-table thead th.sorted::after { content: " ▲"; font-size: .6em; }
+.browse-table thead th.sorted.desc::after { content: " ▼"; }
+
+/* The game board fixes column widths by position; ten columns is a
+   different table, so those rules are undone here. */
+.browse-table thead th:first-child,
+.browse-table thead th:nth-child(2),
+.browse-table thead th:nth-child(7),
+.browse-table thead th:last-child { width: auto; }
+
+.browse-table { table-layout: auto; }
+
+.browse-table tbody th,
+.browse-table tbody td {
+  padding: .45rem .6rem;
+  font-size: .82rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--border-soft);
+  line-height: 1.4;
+}
+
+.browse-table tbody tr:hover th,
+.browse-table tbody tr:hover td { background: var(--bg-raised); }
+
+.browse-table .b-gene { font-weight: 600; white-space: nowrap; }
+.browse-table .b-gene a { color: var(--accent); text-decoration: none; }
+.browse-table .b-gene a:hover { text-decoration: underline; }
+.browse-table .b-name { color: var(--text-dim); max-width: 22rem; }
+.browse-table .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* --------------------------------------------------------------- train */
+
+.train-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 42rem;
+  margin: 0 auto 1.25rem;
+}
+
+.train-deck { display: flex; gap: .5rem; align-items: center; }
+
+.train-stats {
+  display: flex;
+  gap: 1rem;
+  font-size: .82rem;
+  color: var(--text-dim);
+}
+
+.train-stats strong { color: var(--text); }
+
+.trainer { max-width: 42rem; margin: 0 auto 3rem; }
+
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.75rem 1.5rem 1.25rem;
+  text-align: center;
+}
+
+.card-kicker {
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 .5rem;
+}
+
+.card-prompt {
+  font-size: 1.4rem;
+  line-height: 1.35;
+  margin: 0 0 .35rem;
+}
+
+.card-sub {
+  margin: 0 0 1.25rem;
+  color: var(--text-dim);
+  font-size: .85rem;
+}
+
+.clues { display: flex; flex-direction: column; gap: .4rem; }
+
+.clue {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  font-size: .9rem;
+  padding: .4rem .7rem;
+  background: var(--bg-sunken);
+  border-radius: var(--radius);
+}
+
+.clue-k {
+  color: var(--text-faint);
+  font-size: .7rem;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  align-self: center;
+}
+
+.clue-v { font-weight: 600; text-align: right; }
+
+.choices {
+  display: grid;
+  /* minmax(0,1fr), not 1fr: a grid track's default minimum is min-content,
+     so one long protein name ("SWI/SNF-related matrix-associated
+     actin-dependent regulator of chromatin subfamily A...") pushes the
+     button clean off the card. */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .5rem;
+  margin-top: .5rem;
+}
+
+.choice {
+  appearance: none;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: .7rem;
+  min-width: 0;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: .7rem .85rem;
+  cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+
+/* The numbered badge is what makes four buttons read as four options
+   rather than four actions — and it labels the 1-4 keyboard shortcuts,
+   which existed before this but were invisible. */
+.choice-key {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: .8rem;
+  font-weight: 600;
+  transition: background .12s, color .12s, border-color .12s;
+}
+
+.choice-body {
+  display: flex;
+  flex-direction: column;
+  gap: .15rem;
+  min-width: 0;
+}
+
+.choice:hover { border-color: var(--accent); }
+.choice:hover .choice-key { border-color: var(--accent); color: var(--text); }
+.choices.answered .choice { cursor: default; }
+.choices.answered .choice:hover { border-color: var(--border); }
+.choices.answered .choice:hover .choice-key { border-color: var(--border); }
+
+/* Neither verdict is carried by colour alone: the badge swaps to a
+   glyph, the same rule the game board follows. */
+.choice.is-right .choice-key {
+  background: var(--correct);
+  border-color: var(--correct-edge);
+  color: #fff;
+}
+
+.choice.is-wrong .choice-key {
+  background: var(--wrong);
+  border-color: var(--wrong-edge);
+  color: #fff;
+}
+
+/* An unpicked wrong answer stays neutral — dimming all three would
+   read as "these were also wrong in some way". */
+.choices.answered .choice:not(.is-right):not(.is-wrong) { opacity: .55; }
+
+.choice-label {
+  font-weight: 600;
+  font-size: .92rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.choice-sub {
+  font-size: .74rem;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.choice.is-right {
+  border-color: var(--correct-edge);
+  background: color-mix(in srgb, var(--correct) 22%, transparent);
+}
+
+.choice.is-wrong {
+  border-color: var(--wrong-edge);
+  background: color-mix(in srgb, var(--wrong) 22%, transparent);
+}
+
+.card-flip { margin-top: .5rem; }
+
+.card-answer {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: .75rem 0;
+  padding: .75rem;
+  background: var(--bg-sunken);
+  border-radius: var(--radius);
+}
+
+.grade { display: flex; gap: .5rem; justify-content: center; }
+.grade-miss { border-color: var(--wrong-edge); color: var(--wrong-edge); }
+
+.card-feedback {
+  margin: 1rem 0 .25rem;
+  font-size: .9rem;
+  padding: .6rem;
+  border-radius: var(--radius);
+}
+
+.card-feedback.good {
+  color: var(--correct-edge);
+  background: color-mix(in srgb, var(--correct) 16%, transparent);
+}
+
+.card-feedback.bad {
+  color: var(--wrong-edge);
+  background: color-mix(in srgb, var(--wrong) 16%, transparent);
+}
+
+.card-next { margin-top: .5rem; }
+
+.card-meta {
+  margin: 1rem 0 0;
+  font-size: .72rem;
+  color: var(--text-faint);
+  letter-spacing: .04em;
+}
+
+.done {
+  text-align: center;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2rem 1.5rem;
+}
+
+.done h2 { margin: 0 0 .5rem; }
+.done p { color: var(--text-dim); margin: 0 0 1.25rem; font-size: .9rem; }
+
+/* ---------------------------------------------------- deck + settings */
+
+/* .modal fixes width at min(30rem, 100%); these two hold grids and want
+   the room, so the width itself has to be overridden, not just max-width. */
+.deck-modal, .settings-modal {
+  width: min(46rem, 100%);
+  text-align: left;
+}
+
+.deck-group { margin-bottom: 1.5rem; }
+
+.deck-group h3 {
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 0 0 .6rem;
+}
+
+.deck-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+  gap: .5rem;
+}
+
+.deck-option {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: .65rem .8rem;
+  cursor: pointer;
+}
+
+.deck-option:hover { border-color: var(--accent); }
+.deck-label { font-weight: 600; font-size: .9rem; }
+.deck-size { font-size: .74rem; color: var(--text-dim); }
+.deck-size strong { color: var(--accent); }
+
+.setting-group {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  padding: .9rem 1rem 1rem;
+  margin: 0 0 1rem;
+}
+
+.setting-group legend {
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 0 .4rem;
+}
+
+.setting-note {
+  margin: 0 0 .75rem;
+  font-size: .8rem;
+  color: var(--text-faint);
+  line-height: 1.5;
+}
+
+.setting-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: .4rem;
+}
+
+.setting-check {
+  display: flex;
+  gap: .55rem;
+  align-items: flex-start;
+  padding: .45rem .55rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: .87rem;
+}
+
+.setting-check:hover { background: var(--bg-sunken); }
+.setting-check input { margin-top: .2rem; flex: 0 0 auto; }
+.setting-check span { display: flex; flex-direction: column; }
+
+.setting-check em {
+  font-style: normal;
+  font-size: .72rem;
+  color: var(--text-faint);
+}
+
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  font-size: .87rem;
+  padding: .35rem 0;
+}
+
+.setting-row select {
+  font: inherit;
+  font-size: .85rem;
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: .3rem .5rem;
+}
+
+@media (max-width: 640px) {
+  .choices { grid-template-columns: minmax(0, 1fr); }
+  .filter { flex: 1 1 100%; }
+  .train-bar { flex-direction: column; align-items: stretch; }
+  .train-stats { justify-content: space-between; }
+  .card-prompt { font-size: 1.2rem; }
+}

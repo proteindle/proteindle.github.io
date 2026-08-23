@@ -25,21 +25,31 @@
   <p class="tagline">Guess the human protein. Every column is a clue.</p>
 </header>
 
-<div class="field-bar">
-  <button id="field-btn" class="field-chip" aria-haspopup="dialog">
-    <span class="field-chip-label">Field</span>
-    <span class="field-chip-value" id="field-name">Everything</span>
-    <span class="field-chip-caret" aria-hidden="true">&#9662;</span>
-  </button>
-</div>
-
-<nav class="modes" id="modes" role="tablist" aria-label="Game mode">
-  <button role="tab" data-mode="daily"    class="mode-btn is-active">Daily</button>
-  <button role="tab" data-mode="freeplay" class="mode-btn">Free play</button>
-  <button role="tab" data-mode="hard"     class="mode-btn">Hard</button>
+<nav class="views" id="views" role="tablist" aria-label="Section">
+  <button role="tab" data-view="play"   class="view-btn is-active">Play</button>
+  <button role="tab" data-view="browse" class="view-btn">Browse</button>
+  <button role="tab" data-view="train"  class="view-btn">Train</button>
 </nav>
 
+<div id="play-chrome">
+  <div class="field-bar">
+    <button id="field-btn" class="field-chip" aria-haspopup="dialog">
+      <span class="field-chip-label">Field</span>
+      <span class="field-chip-value" id="field-name">Everything</span>
+      <span class="field-chip-caret" aria-hidden="true">&#9662;</span>
+    </button>
+  </div>
+
+  <nav class="modes" id="modes" role="tablist" aria-label="Game mode">
+    <button role="tab" data-mode="daily"    class="mode-btn is-active">Daily</button>
+    <button role="tab" data-mode="freeplay" class="mode-btn">Free play</button>
+    <button role="tab" data-mode="hard"     class="mode-btn">Hard</button>
+  </nav>
+</div>
+
 <main>
+
+<div class="view" id="view-play">
 
   <section class="play" id="play">
     <div class="status-line">
@@ -124,6 +134,156 @@
     </p>
   </section>
 
+</div><!-- /view-play -->
+
+
+<div class="view" id="view-browse" hidden>
+
+  <p class="view-intro">
+    Every reviewed human protein in the database, with the same attributes
+    the game scores on. Filter it down, sort it, then send the result
+    straight to <strong>Train</strong> as a deck.
+  </p>
+
+  <div class="filters" id="filters">
+    <div class="filter-row">
+      <label class="filter f-search">
+        <span>Search</span>
+        <input type="text" id="bf-q" placeholder="gene, protein name, alias…"
+               autocomplete="off" spellcheck="false">
+      </label>
+      <label class="filter">
+        <span>Function</span>
+        <select id="bf-fn"><option value="">Any</option></select>
+      </label>
+      <label class="filter">
+        <span>Conserved back to</span>
+        <select id="bf-con"><option value="">Any</option></select>
+      </label>
+      <label class="filter">
+        <span>Localization</span>
+        <select id="bf-loc"><option value="">Any</option></select>
+      </label>
+    </div>
+    <div class="filter-row">
+      <label class="filter">
+        <span>Field</span>
+        <select id="bf-fld"><option value="">Any</option></select>
+      </label>
+      <label class="filter">
+        <span>Chromosome</span>
+        <select id="bf-chr"><option value="">Any</option></select>
+      </label>
+      <label class="filter">
+        <span>Disease-linked</span>
+        <select id="bf-dis">
+          <option value="">Any</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+      </label>
+      <label class="filter">
+        <span>Pool</span>
+        <select id="bf-tier">
+          <option value="">Everything (20,190)</option>
+          <option value="answers">Answerable in-game</option>
+          <option value="daily">Daily pool</option>
+        </select>
+      </label>
+      <button id="bf-reset" class="ghost-btn small">Clear</button>
+    </div>
+  </div>
+
+  <div class="browse-bar">
+    <span id="browse-count" class="browse-count">…</span>
+    <span class="browse-actions">
+      <button id="browse-study" class="primary-btn small">Study these →</button>
+      <button id="browse-csv" class="ghost-btn small">Download CSV</button>
+    </span>
+  </div>
+
+  <div class="board-scroll">
+    <table class="board browse-table" id="browse-table">
+      <thead>
+        <tr id="browse-head">
+          <th scope="col" data-sort="g">Gene</th>
+          <th scope="col" data-sort="n">Protein</th>
+          <th scope="col" data-sort="len">Length<span class="th-sub">aa</span></th>
+          <th scope="col" data-sort="con">Conserved<span class="th-sub">back to</span></th>
+          <th scope="col" data-sort="loc">Localization</th>
+          <th scope="col" data-sort="fn">Function</th>
+          <th scope="col" data-sort="pw">Pathway</th>
+          <th scope="col" data-sort="chr">Chr</th>
+          <th scope="col" data-sort="dis">Disease</th>
+          <th scope="col" data-sort="pap">Papers</th>
+        </tr>
+      </thead>
+      <tbody id="browse-body"></tbody>
+    </table>
+  </div>
+  <div class="browse-more">
+    <button id="browse-more" class="ghost-btn" hidden>Show more</button>
+  </div>
+
+</div><!-- /view-browse -->
+
+
+<div class="view" id="view-train" hidden>
+
+  <div class="train-bar">
+    <div class="train-deck">
+      <button id="deck-btn" class="field-chip" aria-haspopup="dialog">
+        <span class="field-chip-label">Deck</span>
+        <span class="field-chip-value" id="deck-name">Choose a deck</span>
+        <span class="field-chip-caret" aria-hidden="true">&#9662;</span>
+      </button>
+      <button id="train-settings-btn" class="ghost-btn small">Settings</button>
+    </div>
+    <div class="train-stats" id="train-stats"></div>
+  </div>
+
+  <section class="trainer" id="trainer">
+    <p class="view-intro" id="train-empty">
+      Pick a deck to start. Cards use <strong>Leitner boxes</strong>: get one
+      right and it comes back in 1, 3, 7, 21 then 60 days; miss it and it
+      goes back to daily. Only cards that are due are shown.
+    </p>
+
+    <div class="card" id="card" hidden>
+      <p class="card-kicker" id="card-kicker"></p>
+      <h2 class="card-prompt" id="card-prompt"></h2>
+      <p class="card-sub" id="card-sub"></p>
+
+      <div class="choices" id="card-choices" hidden></div>
+
+      <div class="card-flip" id="card-flip" hidden>
+        <button id="card-reveal" class="primary-btn">Show answer</button>
+        <p class="card-answer" id="card-answer" hidden></p>
+        <div class="grade" id="card-grade" hidden>
+          <button class="ghost-btn grade-miss" data-grade="miss">Missed</button>
+          <button class="primary-btn grade-got" data-grade="got">Got it</button>
+        </div>
+      </div>
+
+      <p class="card-feedback" id="card-feedback" hidden></p>
+      <div class="card-next" hidden id="card-next-wrap">
+        <button id="card-next" class="primary-btn">Next</button>
+      </div>
+      <p class="card-meta" id="card-meta"></p>
+    </div>
+
+    <div class="done" id="train-done" hidden>
+      <h2>Deck clear</h2>
+      <p id="done-text"></p>
+      <div class="modal-actions">
+        <button id="done-again" class="ghost-btn">Review anyway</button>
+        <button id="done-deck" class="primary-btn">Another deck</button>
+      </div>
+    </div>
+  </section>
+
+</div><!-- /view-train -->
+
 </main>
 
 <div class="modal-backdrop" id="field-backdrop" hidden>
@@ -164,7 +324,67 @@
   </p>
 </footer>
 
+<div class="modal-backdrop" id="deck-backdrop" hidden>
+  <div class="modal deck-modal" role="dialog" aria-modal="true"
+       aria-labelledby="deck-title">
+    <button class="modal-close" id="deck-close" aria-label="Close">&times;</button>
+    <h2 id="deck-title">Choose a deck</h2>
+    <p class="modal-sub">
+      Progress is kept per deck, so you can have several on the go.
+    </p>
+    <div class="deck-groups" id="deck-groups"></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="settings-backdrop" hidden>
+  <div class="modal settings-modal" role="dialog" aria-modal="true"
+       aria-labelledby="settings-title">
+    <button class="modal-close" id="settings-close" aria-label="Close">&times;</button>
+    <h2 id="settings-title">What gets asked</h2>
+
+    <fieldset class="setting-group">
+      <legend>Attributes</legend>
+      <p class="setting-note">
+        Which columns a card can ask about. Turn off the ones you do not
+        care to memorise.
+      </p>
+      <div class="setting-grid" id="set-cols"></div>
+    </fieldset>
+
+    <fieldset class="setting-group">
+      <legend>Direction</legend>
+      <p class="setting-note">
+        With more than one on, each card picks a direction at random.
+      </p>
+      <div class="setting-grid" id="set-dirs"></div>
+    </fieldset>
+
+    <fieldset class="setting-group">
+      <legend>Session</legend>
+      <label class="setting-row">
+        <span>Cards per session</span>
+        <select id="set-limit">
+          <option value="10">10</option>
+          <option value="20" selected>20</option>
+          <option value="40">40</option>
+          <option value="0">No limit</option>
+        </select>
+      </label>
+      <label class="setting-row">
+        <span>Multiple choice where possible</span>
+        <input type="checkbox" id="set-mc" checked>
+      </label>
+    </fieldset>
+
+    <div class="modal-actions">
+      <button id="settings-reset" class="ghost-btn">Reset to defaults</button>
+      <button id="settings-done" class="primary-btn">Done</button>
+    </div>
+  </div>
+</div>
+
 <script src="scoring.js"></script>
 <script src="app.js"></script>
+<script src="study.js"></script>
 </body>
 </html>

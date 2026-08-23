@@ -140,6 +140,15 @@ async function init() {
   computeDayIndex();
   loadRest();
 
+  // Browse and Train (study.js) read this same database rather than
+  // fetching a second copy — 7 MB is not worth downloading twice. They
+  // wait on the events below instead of polling.
+  window.Proteindle = {
+    state, saveLocal, loadLocal, escapeHtml,
+    restReady: () => state.restLoaded === true,
+  };
+  document.dispatchEvent(new CustomEvent('proteindle:ready'));
+
   el.input.disabled = false;
   el.guessBtn.disabled = false;
   buildFieldPicker();
@@ -246,6 +255,7 @@ function loadRest() {
     fresh.forEach((p) => state.byAccession.set(p.a, p));
     extendSearchIndex(fresh);
     state.restLoaded = true;
+    document.dispatchEvent(new CustomEvent('proteindle:rest'));
     // Someone may be mid-word in the box; redo the lookup so the protein
     // that was missing a moment ago appears without them retyping.
     if (el.input && el.input.value && document.activeElement === el.input) {

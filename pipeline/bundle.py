@@ -39,6 +39,7 @@ def build(artifact=False):
     css = read("style.css")
     scoring = read("scoring.js")
     app = read("app.js")
+    study = read("study.js")
 
     data_path = WEB_DATA / "proteins.json"
     if not data_path.exists():
@@ -68,20 +69,31 @@ def build(artifact=False):
         '<link rel="stylesheet" href="style.css">',
         f"<style>\n{css}\n</style>",
     )
+    # study.js must stay last: it waits on the proteindle:ready event that
+    # app.js fires, and in the inlined build every script runs to
+    # completion in document order, so a listener registered afterwards
+    # would miss the event entirely.
+    tags = ('<script src="scoring.js"></script>\n'
+            '<script src="app.js"></script>\n'
+            '<script src="study.js"></script>')
+    if tags not in html:
+        raise SystemExit("\nCould not find the script tags to replace — has "
+                         "index.html changed?\n")
+
     html = html.replace(
-        '<script src="scoring.js"></script>\n<script src="app.js"></script>',
+        tags,
         f'<script id="proteindle-data" type="application/json">{payload}'
         f"</script>\n"
         + (f'<script id="proteindle-rest" type="application/json">'
            f'{rest_payload}</script>\n' if rest_payload else "")
         +
         f"<script>\n{scoring}\n</script>\n"
-        f"<script>\n{app}\n</script>",
+        f"<script>\n{app}\n</script>\n"
+        f"<script>\n{study}\n</script>",
     )
 
     if "proteindle-data" not in html:
-        raise SystemExit("\nCould not find the script tags to replace — has "
-                         "index.html changed?\n")
+        raise SystemExit("\nThe database was not inlined — bundle is broken.\n")
 
     if artifact:
         # Strip the outer document: the host supplies its own.
