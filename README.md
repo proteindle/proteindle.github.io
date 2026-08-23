@@ -155,22 +155,80 @@ per deck in `localStorage`, so several decks can be on the go at once, and
 there is a daily streak.
 
 A card is a **protein**, not a protein-column pair. Asking "TP53 —
-function?" and "TP53 — chromosome?" as separate cards would multiply a
+function?" and "TP53 — localization?" as separate cards would multiply a
 200-protein deck into 1,400 and make it feel endless; instead the column is
 drawn fresh each time the protein comes up, so a protein you actually know
 has to survive questions from several angles. Which columns can be asked,
 and in which direction, are settings.
 
-Two directions ship on by default and mix: *protein → attribute* ("TP53 —
-what is its function?") and *attributes → protein*, which is the game's own
-logic as a flashcard. Closed columns — function, conservation, chromosome,
-disease, length — are multiple choice and graded objectively; open-ended
-ones — localization, pathway, family — are self-graded flips.
+### The playability rule
+
+Bio Grid states it as: **a criterion earns its place only if a working
+biologist, asked "name a protein that is X", could answer from memory — not
+"could look it up"**. Inverted for flashcards: an attribute earns its place
+only if someone shown the protein could *recall* the answer, or reason to it
+from what the protein does.
+
+The first version of Train ignored this and shipped chromosome and length
+cards. Nobody knows what sits on chromosome 12, or which side of 800 aa a
+protein falls. Those are not hard questions, they are lookups — and in
+spaced repetition they are worse than useless, because a card you cannot
+reason about trains nothing and still takes a slot in the rotation. Bio Grid
+cut eleven chromosome criteria and two length criteria on the same grounds.
+Both are now gone here too, and `smoke_study.py` asserts they cannot come
+back.
+
+Six attributes survived, and each has a reason:
+
+| Attribute | Form | Why it earns a card |
+| --- | --- | --- |
+| Function | multiple choice | The single most useful fact about a protein |
+| Localization | self-graded | Recallable, and reasonable from function |
+| Pathway | self-graded | The process it belongs to |
+| Family | self-graded | Real working knowledge — "it's a serpin" |
+| Conservation | multiple choice | Coarsened to three buckets, see below |
+| Disease | self-graded | The *named* disease, not a yes/no |
+
+Two changes to what was there before are worth spelling out.
+
+**Conservation is asked in three buckets** — *also found in bacteria*, *also
+found in yeast*, *animals only* — not on the seven-rung ladder. The full
+ladder is right for the game, where it is a clue with an up/down arrow, but
+"Opisthokonta or Eumetazoa?" is a lookup, while "is it also in yeast?" is
+something you can reason to from what the protein does. The three buckets
+split the answer pool 733 / 1,822 / 1,750, so none of them is a giveaway.
+
+**The disease card asks which disease, not whether.** "Is it disease-linked?"
+is a coin flip that most famous proteins answer yes to, so a card could
+climb the Leitner boxes on guesswork alone. "Which disease is BRCA2 linked
+to?" is a real question with a real answer. The yes/no survives as a *clue*
+in the other direction, where being one of four attributes is exactly what
+it is good for.
+
+### Asking and telling are different jobs
+
+Two directions ship on by default and mix: *protein → attribute* and
+*attributes → protein*, which is the game's own logic as a flashcard. An
+attribute can be good at one and useless at the other, so they are separate
+flags in the code:
+
+- **Family and named disease are ask-only.** Both hand over the answer as a
+  clue. "Cytochrome P450 family" against CYP2C19 / IL6 / MTHFR / FASLG is
+  not a question, and neither is "IL-1 family" against IL1B.
+- **Disease-linked yes/no is clue-only**, for the reason above.
 
 The attributes → protein direction ranks its clues by how few cards in the
 deck share that value, and drops any attribute the whole deck has in common.
 Without that, a deck filtered to Function = Chromatin opens every card with
-"Function: Chromatin", which is a wasted line and no help at all.
+"Function: Chromatin", which is a wasted line and no help at all. Distractors
+must also differ from the answer on a clue that is actually shown, or the
+question has more than one right answer.
+
+Function distractors come from the same amber family the game uses for
+partial credit. `Protease / Phosphatase / Ion channel / Signalling` has one
+plausible answer; `Transcription factor / Chromatin / DNA repair /
+RNA-binding` for EZH2 is a question you have to know something to answer. A
+near miss is where the learning is.
 
 ---
 

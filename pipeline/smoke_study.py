@@ -165,6 +165,69 @@ def run(bundle=False, shots=False):
         streak = page.inner_text("#train-stats")
         check("streak is tracked", "day streak" in streak, streak)
 
+        # ------------------------------------------- the playability rule
+        #
+        # Bio Grid's rule, inverted for flashcards: an attribute earns its
+        # place only if someone shown the protein could recall the answer.
+        # Chromosome and length fail it — nobody knows what is on
+        # chromosome 12. Bio Grid has a test so its eleven chromosome
+        # criteria cannot come back; this is the same guard.
+        offered = page.eval_on_selector_all(
+            "#set-cols input", "n => n.map(x => x.dataset.col)")
+        check("no chromosome card is offered", "chr" not in offered,
+              str(offered))
+        check("no length card is offered", "len" not in offered, str(offered))
+        check("the disease Yes/No card is gone", "dis" not in offered,
+              str(offered))
+        check("the named disease card is offered", "disn" in offered,
+              str(offered))
+
+        # Generate a run of cards and read what they actually ask.
+        prompts = page.evaluate("""async () => {
+            const seen = [];
+            for (let i = 0; i < 60; i++) {
+                const el = document.getElementById('card-prompt');
+                if (el && el.textContent) seen.push(el.textContent.trim());
+                // Only click what a person could actually click: an
+                // element inside a hidden container still answers
+                // querySelector.
+                const vis = (el) => el && el.offsetParent !== null;
+                const c = document.querySelector('#card-choices .choice');
+                if (vis(c)) { c.click(); }
+                else {
+                    const r = document.getElementById('card-reveal');
+                    if (vis(r)) { r.click(); }
+                    const g = document.querySelector('.grade-got');
+                    if (vis(g)) g.click();
+                }
+                const n = document.getElementById('card-next');
+                if (vis(n)) n.click();
+                await new Promise(r => setTimeout(r, 12));
+            }
+            return seen;
+        }""")
+        bad = [t for t in prompts
+               if "chromosome" in t.lower() or "how long" in t.lower()
+               or "length" in t.lower()]
+        check("no card asks a look-it-up question", not bad,
+              f"{len(prompts)} prompts, offenders: {bad[:3]}")
+        check("conservation is asked in recallable terms",
+              not any("opisthokonta" in t.lower() or "eumetazoa" in t.lower()
+                      for t in prompts))
+
+        # And the conservation answers must be the three coarse buckets.
+        buckets = page.evaluate("""() => {
+            const out = new Set();
+            document.querySelectorAll('.choice-label').forEach(
+                n => out.add(n.textContent));
+            return Array.from(out);
+        }""")
+        fine = [b for b in buckets if b in
+                ("Opisthokonta", "Eumetazoa", "Vertebrata", "Mammalia",
+                 "Eukaryota", "Universal", "Ancient")]
+        check("the seven-rung ladder is not offered as answers", not fine,
+              str(fine))
+
         # Leitner state must survive a reload.
         stored = page.evaluate(
             "() => Object.keys(localStorage)"
@@ -206,6 +269,8 @@ def run(bundle=False, shots=False):
             "'proteindle:study:settings')) || {}).cols || []")
         check("an empty column set falls back to the defaults",
               len(left) > 0, str(left))
+        check("the fallback contains no cut column",
+              not ({"chr", "len", "dis"} & set(left)), str(left))
         check("a card still renders after that",
               page.is_visible("#card") or page.is_visible("#train-done"))
 

@@ -36,31 +36,89 @@ const srsKey = (id) => `proteindle:study:srs:${id}`;
 
 const PAGE = 100;          // browse rows per chunk
 
-/* Which attributes a card can ask about.
-   `closed` marks a column with a small, known value set, which is what
-   makes multiple choice possible; the rest are self-graded. */
+/* THE PLAYABILITY RULE, inherited from Bio Grid, where it is stated as:
+   a criterion earns its place only if a working biologist, asked "name a
+   protein that is X", could answer from memory — not "could look it up".
+   Inverted for flashcards: an attribute earns its place only if someone
+   shown the protein could RECALL the answer, or reason to it from what
+   the protein does.
+
+   Chromosome and length fail that outright and are gone. Nobody knows
+   what sits on chromosome 12, or which side of 800 aa a protein falls;
+   those cards were lookups wearing a quiz costume, and worse than
+   useless in spaced repetition because a card you cannot reason about
+   trains nothing and still eats a slot. Bio Grid cut eleven chromosome
+   criteria and two length criteria for the same reason, and has a test
+   so they cannot come back. So does this — see smoke_study.py.
+
+   `closed`  a small, known value set, so multiple choice is possible.
+   `ask`     may be the subject of a question.
+   `clue`    may appear as a clue in the attributes-to-protein direction.
+
+   The two are not the same. "Disease-linked: yes" is a fair clue and a
+   terrible question — a coin flip that most famous proteins answer yes
+   to, so it would climb the Leitner boxes on guesswork alone. The named
+   disease is the opposite: a real question, and a clue that would simply
+   hand over the answer. */
 const COLUMNS = [
-  { key: 'fn',   label: 'Function',      closed: true,  ask: 'what kind of protein is it?' },
-  { key: 'con',  label: 'Conservation',  closed: true,  ask: 'how far back is it conserved?' },
-  { key: 'loc',  label: 'Localization',  closed: false, ask: 'where in the cell is it?' },
-  { key: 'pw',   label: 'Pathway',       closed: false, ask: 'which pathways is it in?' },
-  { key: 'chr',  label: 'Chromosome',    closed: true,  ask: 'which chromosome?' },
-  { key: 'dis',  label: 'Disease-linked', closed: true, ask: 'is it disease-linked?' },
-  { key: 'len',  label: 'Length',        closed: true,  ask: 'roughly how long?' },
-  { key: 'fam',  label: 'Family',        closed: false, ask: 'which family?' },
+  { key: 'fn',   label: 'Function',       closed: true,  ask: true,  clue: true,
+    q: 'What kind of protein is it?' },
+  { key: 'loc',  label: 'Localization',   closed: false, ask: true,  clue: true,
+    q: 'Where in the cell is it?' },
+  { key: 'pw',   label: 'Pathway',        closed: false, ask: true,  clue: true,
+    q: 'Which pathway does it work in?' },
+  // Ask-only, and for the same reason as the named disease: the family
+  // string usually contains the answer. "Cytochrome P450 family" against
+  // CYP2C19 / IL6 / MTHFR / FASLG is not a question, and neither is
+  // "IL-1 family" against IL1B. It is a good thing to be asked and a
+  // useless thing to be told.
+  { key: 'fam',  label: 'Family',         closed: false, ask: true,  clue: false,
+    q: 'Which protein family?' },
+  { key: 'con',  label: 'Conservation',   closed: true,  ask: true,  clue: true,
+    q: 'How deeply conserved is it?' },
+  { key: 'disn', label: 'Disease',        closed: false, ask: true,  clue: false,
+    q: 'Which disease is it linked to?' },
+  { key: 'dis',  label: 'Disease-linked', closed: true,  ask: false, clue: true,
+    q: '' },
 ];
+
+const ASKABLE = COLUMNS.filter((c) => c.ask).map((c) => c.key);
+
+/* Conservation, collapsed from the seven-rung ladder to the three
+   buckets Bio Grid kept. The full ladder is right for the game, where it
+   is a clue with an up/down arrow; as a question it is not recallable —
+   "Opisthokonta or Eumetazoa?" is a lookup, while "is it also in
+   bacteria, in yeast, or animals only?" is something you can reason to
+   from what the protein does. Splits the answer pool 733 / 1,822 / 1,750,
+   so no bucket is a giveaway. */
+const CONSERVATION_BUCKETS = {
+  universal:    'Also found in bacteria',
+  ancient:      'Also found in bacteria',
+  eukaryota:    'Also found in yeast',
+  opisthokonta: 'Also found in yeast',
+  eumetazoa:    'Animals only',
+  vertebrata:   'Animals only',
+  mammalia:     'Animals only',
+};
 
 const DIRECTIONS = [
   { key: 'p2a', label: 'Protein → attribute',
     note: 'TP53 — what is its function?' },
   { key: 'a2p', label: 'Attributes → protein',
-    note: 'Transcription factor, chr 17 — which protein?' },
+    note: 'Transcription factor, nucleus, apoptosis — which protein?' },
   { key: 'g2n', label: 'Gene ↔ protein name',
     note: 'TP53 — what is the protein called?' },
 ];
 
+/* v2 dropped the chromosome and length cards. A returning player has the
+   old set in localStorage, and merging it forward would quietly resurrect
+   them, so a stored config without the current version is discarded
+   rather than migrated — there are four booleans in it, not a document. */
+const SETTINGS_VERSION = 2;
+
 const DEFAULTS = {
-  cols: ['fn', 'con', 'loc', 'pw', 'chr', 'dis'],
+  v: SETTINGS_VERSION,
+  cols: ASKABLE.slice(),
   dirs: ['p2a', 'a2p'],
   limit: 20,
   mc: true,
@@ -123,31 +181,24 @@ function sample(arr, n, exclude) {
 const db = () => window.Proteindle && window.Proteindle.state;
 const ladderLabel = (k) => (db() && db().ladderLabel[k]) || k || '—';
 
-function lenBucket(n) {
-  if (n < 150) return 'under 150 aa';
-  if (n < 300) return '150–300 aa';
-  if (n < 500) return '300–500 aa';
-  if (n < 1000) return '500–1000 aa';
-  return 'over 1000 aa';
-}
-
 /* The display value for a column, as a string a person can read. */
 function valueOf(p, key) {
   switch (key) {
-    case 'loc': return (p.loc || []).join(' · ');
-    case 'pw':  return (p.pw || []).join(' · ');
-    case 'dis': return p.dis ? 'Yes' : 'No';
-    case 'con': return ladderLabel(p.con);
-    case 'len': return lenBucket(p.len);
-    case 'chr': return p.chr || '—';
-    default:    return p[key] || '—';
+    case 'loc':  return (p.loc || []).join(' · ');
+    case 'pw':   return (p.pw || []).join(' · ');
+    case 'disn': return (p.disn || []).join(' · ');
+    case 'dis':  return p.dis ? 'Yes' : 'No';
+    case 'con':  return CONSERVATION_BUCKETS[p.con] || ladderLabel(p.con);
+    default:     return p[key] || '—';
   }
 }
 
 function hasValue(p, key) {
   if (key === 'dis') return typeof p.dis === 'boolean';
-  if (key === 'len') return typeof p.len === 'number';
-  if (key === 'loc' || key === 'pw') return (p[key] || []).length > 0;
+  if (key === 'con') return !!CONSERVATION_BUCKETS[p.con];
+  if (key === 'loc' || key === 'pw' || key === 'disn') {
+    return (p[key] || []).length > 0;
+  }
   return !!p[key];
 }
 
@@ -160,7 +211,13 @@ function boot() {
   S.ready = true;
 
   const saved = load(SET_KEY);
-  if (saved) S.settings = Object.assign({}, DEFAULTS, saved);
+  if (saved && saved.v === SETTINGS_VERSION) {
+    S.settings = Object.assign({}, DEFAULTS, saved);
+    // Belt and braces: even a correctly-versioned config is filtered, so
+    // a hand-edited localStorage cannot reintroduce a cut column.
+    S.settings.cols = S.settings.cols.filter((k) => ASKABLE.includes(k));
+    if (!S.settings.cols.length) S.settings.cols = DEFAULTS.cols.slice();
+  }
 
   buildFilterOptions();
   buildSettingsUI();
@@ -566,8 +623,17 @@ function nextDueText() {
 }
 
 function askableColumns(p) {
-  return COLUMNS.filter((c) => S.settings.cols.includes(c.key)
+  return COLUMNS.filter((c) => c.ask && S.settings.cols.includes(c.key)
                             && hasValue(p, c.key));
+}
+
+/* Clues for the attributes-to-protein direction. A different list: the
+   named disease is ask-only because it would hand over the answer, and
+   the disease yes/no is clue-only because as a question it is a coin
+   flip. Not filtered by settings — turning off a card type should not
+   also strip the board the other direction reasons from. */
+function clueColumns(p) {
+  return COLUMNS.filter((c) => c.clue && hasValue(p, c.key));
 }
 
 function buildCard() {
@@ -579,7 +645,8 @@ function buildCard() {
 
   const dirs = S.settings.dirs.filter((d) => {
     if (d === 'g2n') return !!p.n;
-    if (d === 'p2a' || d === 'a2p') return askableColumns(p).length > 0;
+    if (d === 'p2a') return askableColumns(p).length > 0;
+    if (d === 'a2p') return clueColumns(p).length > 0;
     return false;
   });
   if (!dirs.length) { sess.queue.shift(); return buildCard(); }
@@ -607,7 +674,7 @@ function buildCard() {
     const shareCount = (c) => members.reduce((n, q) =>
       n + (hasValue(q, c.key) && valueOf(q, c.key) === valueOf(p, c.key)
            ? 1 : 0), 0);
-    const ranked = askableColumns(p)
+    const ranked = clueColumns(p)
       .map((c) => ({ c, share: shareCount(c) }))
       .sort((a, b) => a.share - b.share);
     // Anything every single card shares is pure noise; drop it unless
@@ -646,7 +713,26 @@ function buildCard() {
       if (q && hasValue(q, col.key)) values.add(valueOf(q, col.key));
     });
     values.delete(answer);
-    let others = sample(Array.from(values), 3);
+    let others;
+    if (col.key === 'fn') {
+      // Distractors from the same amber family first. The game already
+      // groups Kinase/Protease/Phosphatase as "Enzyme" and
+      // Receptor/Signalling/Immune as "Signalling"; reusing that here
+      // turns "Protease / Phosphatase / Ion channel / Signalling" —
+      // where the answer is the only plausible one — into a choice
+      // between four things it could actually be. A near miss is where
+      // the learning is.
+      const groups = (db().db && db().db.functionGroups) || {};
+      const near = Array.from(values).filter(
+        (v) => groups[v] && groups[v] === groups[answer]);
+      const far = Array.from(values).filter((v) => near.indexOf(v) === -1);
+      others = sample(near, 3);
+      if (others.length < 3) {
+        others = others.concat(sample(far, 3 - others.length));
+      }
+    } else {
+      others = sample(Array.from(values), 3);
+    }
     // A deck can be too uniform to supply distractors — every protein in
     // a "Kinase" deck has the same function. Fall back to the whole
     // proteome rather than showing a question with one option.
@@ -667,7 +753,7 @@ function buildCard() {
 
   return {
     p, dir, kicker: p.g,
-    prompt: col.ask.charAt(0).toUpperCase() + col.ask.slice(1),
+    prompt: col.q,
     sub: esc(p.n), answer, choices, col,
   };
 }
@@ -712,6 +798,10 @@ function renderCard(card) {
       + (c.sub ? `<span class="choice-sub">${esc(c.sub)}</span>` : '')
       + `</span></button>`).join('');
   } else {
+    // Emptied, not merely hidden. A hidden element still answers
+    // querySelector and can still be clicked by script, and the old
+    // buttons would then be read against a card that has no choices.
+    choices.innerHTML = '';
     choices.hidden = true;
     flip.hidden = false;
     $('card-reveal').hidden = false;
@@ -776,7 +866,7 @@ function finishSession() {
 /* ----------------------------------------------------------- settings */
 
 function buildSettingsUI() {
-  $('set-cols').innerHTML = COLUMNS.map((c) =>
+  $('set-cols').innerHTML = COLUMNS.filter((c) => c.ask).map((c) =>
     `<label class="setting-check"><input type="checkbox" data-col="${c.key}"`
     + `${S.settings.cols.includes(c.key) ? ' checked' : ''}>`
     + `<span>${esc(c.label)}`
@@ -800,6 +890,7 @@ function readSettings() {
   S.settings.dirs = dirs.length ? dirs : DEFAULTS.dirs.slice();
   S.settings.limit = parseInt($('set-limit').value, 10) || 0;
   S.settings.mc = $('set-mc').checked;
+  S.settings.v = SETTINGS_VERSION;
   if (!cols.length || !dirs.length) buildSettingsUI();
   save(SET_KEY, S.settings);
 }
@@ -897,6 +988,7 @@ function wire() {
   on($('card-choices'), 'click', (e) => {
     const b = e.target.closest('.choice');
     if (!b || $('card-choices').classList.contains('answered')) return;
+    if (!S.card || !S.card.choices) return;
     const i = +b.dataset.i;
     const picked = S.card.choices[i];
     $('card-choices').classList.add('answered');
