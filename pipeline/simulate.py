@@ -156,7 +156,11 @@ def main():
     allp = data["proteins"]
 
     if args.max_guesses is None:
-        args.max_guesses = data.get("maxGuesses", MAX_GUESSES)
+        # v2 databases store a per-mode map; the simulator plays the daily.
+        limits = data.get("maxGuesses", MAX_GUESSES)
+        if isinstance(limits, dict):
+            limits = limits.get("daily") or MAX_GUESSES
+        args.max_guesses = limits
 
     tiers = {"daily": {"daily"},
              "freeplay": {"daily", "freeplay"},

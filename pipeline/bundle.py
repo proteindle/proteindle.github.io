@@ -54,6 +54,16 @@ def build(artifact=False):
     # "\/" is a legal JSON escape for "/", so this is safe to unescape.
     payload = payload.replace("</", "<\\/")
 
+    # The second file — every protein that is guessable but never the
+    # answer. In the split build it is fetched after first paint; here
+    # there is nothing to fetch, so it rides along inline.
+    rest_path = WEB_DATA / "proteins-rest.json"
+    rest_payload = ""
+    if rest_path.exists():
+        rest = json.loads(rest_path.read_text(encoding="utf-8"))
+        rest_payload = json.dumps(rest, separators=(",", ":"))
+        rest_payload = rest_payload.replace("</", "<\\/")
+
     html = html.replace(
         '<link rel="stylesheet" href="style.css">',
         f"<style>\n{css}\n</style>",
@@ -62,6 +72,9 @@ def build(artifact=False):
         '<script src="scoring.js"></script>\n<script src="app.js"></script>',
         f'<script id="proteindle-data" type="application/json">{payload}'
         f"</script>\n"
+        + (f'<script id="proteindle-rest" type="application/json">'
+           f'{rest_payload}</script>\n' if rest_payload else "")
+        +
         f"<script>\n{scoring}\n</script>\n"
         f"<script>\n{app}\n</script>",
     )

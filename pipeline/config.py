@@ -237,7 +237,168 @@ MAX_LOCALIZATIONS = 3
 # catches "kinases". Keep keyword lists narrow: they are the last pass and
 # a broad term there (e.g. "transferase") hijacks whole classes.
 
+
+# A protein name says what a protein IS in its head noun; the rest of the
+# name usually says what it acts on, binds to or hangs off. With only a
+# leading boundary the rules could not tell the two apart, so "receptor"
+# fired on "TNF receptor-associated factor 6" and "kinase" on "S-phase
+# kinase-associated protein 1". 575 entries were classified off a modifier
+# this way — the largest single error shape in the column, and it spanned
+# every class, which is why it is fixed here once rather than in 575
+# override entries.
+#
+# Applied per OCCURRENCE, not per name, and that distinction is the whole
+# safety margin. "Toll-like receptor 2 (Toll/interleukin-1 receptor-like
+# protein 4)" contains both a modifier use and a real one; the lookahead
+# skips the blocked occurrence and matches the good one, so TLR2 stays a
+# Receptor.
+#
+# "-like" and "homolog" are deliberately NOT in this list. IL1RL1 is
+# "Interleukin-1 receptor-like 1" and is a genuine receptor; so is CCR5 via
+# "C-C chemokine receptor type 5". Adding them moves another 294 proteins
+# and most of those moves are wrong.
+NOT_A_MODIFIER = (
+    r"(?!\w*(?:-|\s)(?:related|associated|dependent|independent|binding|"
+    r"bound|interacting|inducible|regulated|responsive|activating|"
+    r"inactivating|anchored|substrate|antagonist|stimulating|inhibiting|"
+    r"targeting|deficient|coupling|linking|linked|modulating|enhancing|"
+    r"anchor|adaptor|adapter|chaperone)\b)"
+)
+
+# Per-pattern guards, for the handful of name patterns that need something
+# narrower than a word boundary.
+#
+# The first three are the missing boundary at the other end: a pattern
+# firing inside a longer, unrelated word. A blanket trailing \b is NOT the
+# fix — it would break "kinase" -> "kinases" and "matrix metallo" ->
+# "matrix metalloproteinase", both of which are wanted.
+#
+# The last three are protein families whose names double as DOMAIN names,
+# and the domain sense is the commoner one: 18 of the 23 uses of
+# "thrombospondin" are "thrombospondin type-1 domain" or "with
+# thrombospondin motifs", and nearly every use of "fibronectin" outside FN1
+# itself is "fibronectin type III domain". Without these, the daily answer
+# ADAMTS13 ("...with thrombospondin motifs 13") becomes a Structural
+# protein instead of a protease, and FNDC5 — which is the precursor of
+# irisin, a myokine — stops being Signalling.
+WORD_GUARDS = {
+    "cytokine":       r"(?!sis)",    # "Protein regulator of cytokinesis 1"
+    "keratin":        r"(?!ocyte)",  # "Keratinocyte growth factor"
+    "actin":          r"(?!g\b)",    # "...acting..."
+    "thrombospondin": r"(?!\s+(?:type|motifs?))",
+    "fibronectin":    r"(?!\s+type|-like)",
+    "fibrinogen":     r"(?!\s+domain|-like|/)",
+    # ...and three more of the same shape, where the longer word is the
+    # name of an ENZYME that acts on the structural protein rather than
+    # the protein itself: the aggrecanases ADAMTS4/5, the tubulinyl-Tyr
+    # carboxypeptidases VASH1/2, and NEDD9 ("Enhancer of filamentation 1").
+    # The last two were wrong before any of this work and are fixed here
+    # because the guard costs one line.
+    "aggrecan":       r"(?!ase)",
+    "tubulin":        r"(?!yl)",
+    "filament":       r"(?!ation)",
+}
+
+# Structural protein families, by name.
+#
+# These exist because the Structural class used to rest on the UniProt
+# keywords "Cytoskeleton" (759 proteins) and "Cell adhesion" (235) — 59% of
+# the class — and both are LOCATION and PROCESS keywords rather than
+# function ones. They say where a protein is and what it takes part in,
+# which is the same mistake that got the GO-terms pass deleted: BCL2L1,
+# NPM1, CCNB1, MEFV, S100B and HSPB1 all arrived in Structural that way.
+#
+# Deleting the two keywords alone was measured and is worse: it sends 927
+# proteins to "Other", and among them VIM, FN1, DMD and DES, which really
+# are structural and had no other rule to catch them. The keyword was
+# simultaneously the dumping ground and the only thing holding the class
+# together, so it is replaced rather than removed.
+#
+# "catenin" is deliberately absent: it pulls CTNNB1 out of Transcription
+# factor, and beta-catenin is famous for Wnt signalling, not for structure.
+# The second block, from "filamin" down, is there because the first draft
+# of this list overshot: dropping the keywords sent FLNA, EZR, CTTN, PFN1,
+# CFL1, CLTC and NF2 to "Other". Those are canonical cytoskeletal proteins
+# and the keyword had been the only thing holding them. They are named
+# here rather than recovered by re-adding the keyword, because the keyword
+# also brought 750 proteins that are merely LOCATED at the cytoskeleton.
+#
+# "catenin alpha" and not "catenin": alpha-catenin is an adherens-junction
+# protein, beta-catenin is a Wnt transducer, and CTNNB1 must stay out.
+STRUCTURAL_NAMES = [
+    "vimentin", "desmin", "fibronectin", "laminin", "elastin", "titin",
+    "troponin", "tropomyosin", "dystrophin", "utrophin", "plectin",
+    "vinculin", "talin", "septin", "nestin", "syndecan", "tenascin",
+    "fibulin", "periostin", "thrombospondin", "nebulin", "dystroglycan",
+    "sarcoglycan", "desmoplakin", "desmoglein", "desmocollin",
+    "plakophilin", "plakoglobin", "emerin", "vitronectin", "fibrinogen",
+    "aggrecan", "versican", "decorin", "biglycan", "lumican", "matrilin",
+    "nidogen", "perlecan", "agrin", "myomesin", "obscurin", "dynein",
+    "kinesin", "microfibril",
+
+    "filamin", "ezrin", "moesin", "radixin", "merlin", "cofilin",
+    "profilin", "gelsolin", "clathrin", "villin", "tropomodulin",
+    "dematin", "adducin", "ankyrin", "zyxin", "paxillin", "palladin",
+    "drebrin", "coronin", "fascin", "myotilin", "synemin", "catenin alpha",
+    "cortactin",
+]
+
 FUNCTIONAL_CLASSES = [
+    # ---- these two run first, because they exist to BEAT a later rule ----
+
+    # Inhibitors of enzymes, which the enzyme rules were claiming as the
+    # enzyme itself. p21 and p27 were "Kinase" — they are CDK inhibitors,
+    # the opposite thing — and alpha-1-antitrypsin and cystatin C were
+    # "Protease", off the UniProt keyword "Protease inhibitor" matching the
+    # pattern "protease".
+    #
+    # The name rule needs a lookaround, hence "re:". "Cyclin-dependent
+    # kinase inhibitor 1" is an inhibitor; "Inhibitor of nuclear factor
+    # kappa-B kinase subunit beta" is a kinase, and no literal tells them
+    # apart. The test is whether the enzyme word sits immediately before
+    # "inhibitor", optionally with a number between.
+    ("Inhibitor",
+     ["protease inhibitor", "protein phosphatase inhibitor"],
+     [],
+     [r"re:\b(?:kinase|protease|proteinase|peptidase|metalloproteinase"
+      r"|metallopeptidase|phosphatase|elastase|trypsin|chymotrypsin)"
+      r"(?:\s+\d+[a-z]?)?\s+inhibitor\b",
+      "activator inhibitor", "antitrypsin", "antichymotrypsin",
+      "antithrombin", "antiplasmin", "cystatin", "serpin"]),
+
+    # Ligands, which the Receptor and Kinase rules were claiming. PD-L1,
+    # FasL and RANKL came out as receptors; "Fms-related tyrosine kinase 3
+    # ligand" came out as a kinase. Same class as the row above: it has to
+    # run before the rule it corrects.
+    #
+    # Not anchored at the start, and not followed by a hyphen, so
+    # "Ligand-dependent corepressor" and "Ligand of Numb protein X 2" are
+    # left to the rules that already get them right.
+    ("Signalling",
+     [],
+     [],
+     [r"re:(?<!^)\bligand\b(?!-)"]),
+
+    # Small GTPases, by EC number alone.
+    #
+    # RHOA, CDC42 and the ARF/RAB/RAS-like families were "Enzyme (other)"
+    # while HRAS, KRAS, NRAS and RAC1 were "Signalling" -- 30 of the 163
+    # small-GTPase-family proteins disagreeing with the other 133, purely
+    # because the lucky ones have "GTPase" or "Ras-related" in their names
+    # and RhoA is called "Transforming protein RhoA".
+    #
+    # This is an EC rule rather than a name rule on purpose. Matching the
+    # names was measured first and reached much too far: the aliases
+    # "ATP/GTP-binding protein 1" made the cytosolic carboxypeptidases
+    # AGBL1-5 signalling proteins instead of proteases, and
+    # "ADP-ribosylation factor-like protein 6-interacting protein" caught
+    # ARL6IP1/4/6, which interact with an ARF rather than being one.
+    # EC 3.6.5.2 IS "small monomeric GTPase" and says so exactly.
+    #
+    # It has to sit above Enzyme (other) because that rule claims all of
+    # EC 3, and the EC pass takes the first matching rule in this list.
+    ("Signalling", [], ["3.6.5.2"], []),
+
     ("Kinase",
      ["kinase"],
      ["2.7.1", "2.7.4", "2.7.10", "2.7.11", "2.7.12", "2.7.13"],
@@ -254,9 +415,66 @@ FUNCTIONAL_CLASSES = [
      ["protease", "peptidase", "proteinase", "caspase", "cathepsin",
       "matrix metallo", "granzyme", "trypsin", "chymotrypsin", "elastase"]),
 
+    # Genome maintenance. Sits above Transcription factor because the two
+    # were being confused: "DNA-binding" used to be enough to be called a
+    # transcription factor, which made MSH2, MSH6, ERCC1 and BRCA2
+    # transcription factors. They bind DNA to repair it.
+    #
+    # Deliberately narrow. Enzymes that happen to act on DNA — polymerases,
+    # ligases, topoisomerases, PARP — stay enzymes, and ATM and ATR stay
+    # kinases, because that is the more useful thing to know about them and
+    # it is what a player would say out loud.
+    # The keyword "DNA damage" is gone. UniProt applies it to anything a
+    # damage response touches, which made CCND1, BRD4, FMR1, CCAR2, CIP2A
+    # and TANK repair proteins — 30 entries, wrong nearly every time. The
+    # keyword "DNA repair" stays: it is right for BRCA2, FANCD2, NBN, PALB2
+    # and RPA1, and only HMGB1 is arguable.
+    #
+    # The NAME pattern "dna damage" stays too, and DDIT3 no longer needs it
+    # removed: "DNA damage-inducible transcript 3" is a modifier, so
+    # NOT_A_MODIFIER declines it and DDIT3 lands on Transcription factor.
+    ("DNA repair",
+     ["dna repair", "mismatch repair"],
+     [],
+     ["dna repair", "mismatch repair", "excision repair", "dna damage",
+      "double-strand break repair", "crossover junction"]),
+
+    # Writers, erasers, readers and remodellers of chromatin.
+    #
+    # Added because these were scattered across five classes with no honest
+    # home: HDAC6 and the SMARC proteins were "Structural" (off "tubulin"
+    # and "actin" in their names), DNMT1 and KMT2A "Transcription factor",
+    # EZH2 and EP300 "Enzyme (other)", BRD4 "DNA repair". 22 of the 365
+    # daily answers are in here, and "the thing that modifies chromatin" is
+    # what a biologist says out loud about every one of them.
+    #
+    # Sits above Transcription factor because the overlap is real and
+    # chromatin is the more specific statement, and above Structural and
+    # Enzyme so that HDAC6 stops being a tubulin and EZH2 stops being a
+    # generic enzyme.
+    #
+    # The enzyme-activity patterns are qualified with their substrate on
+    # purpose. A bare "acetyltransferase" catches NAT2, which is drug
+    # metabolism; a bare "demethylase" catches FTO, which acts on RNA; and
+    # a bare "deacetylase" catches the esterases ESD and CES1. Naming the
+    # substrate costs nothing and keeps all three out.
+    #
+    # Known and accepted: the mitochondrial sirtuins SIRT3 and SIRT5 land
+    # here, because they genuinely are protein deacetylases and the name
+    # gives no hint they work outside the nucleus. Neither is a daily
+    # answer. Fixing them would need a per-protein override, which is
+    # exactly what this class exists to avoid.
+    ("Chromatin",
+     ["chromatin regulator"],
+     [],
+     ["histone", "chromatin", "heterochromatin", "bromodomain",
+      "chromodomain", "nucleosome", "polycomb", "swi/snf",
+      "protein deacetylase", "protein deacylase", "histone deacetylase",
+      "histone acetyltransferase", "protein-lysine n-methyltransferase",
+      "dna (cytosine-5)-methyl", "methylcytosine dioxygenase"]),
+
     ("Transcription factor",
-     ["dna-binding", "transcription", "activator", "repressor",
-      "homeobox"],
+     ["transcription", "activator", "repressor", "homeobox"],
      [],
      ["transcription factor", "homeobox", "zinc finger protein",
       "nuclear receptor", "forkhead", "sox-", "gata-", "kruppel"]),
@@ -277,15 +495,19 @@ FUNCTIONAL_CLASSES = [
      ["transport", "symport", "antiport", "translocase", "ion transport",
       "amino-acid transport", "sugar transport", "lipid transport"],
      ["7."],
-     ["transporter", "carrier", "permease", "solute carrier", "atpase",
+     ["transporter", "carrier", "permease", "solute carrier",
       "exchanger", "pump"]),
 
+    # "Cytoskeleton" and "Cell adhesion" have been removed from the keyword
+    # list and replaced by STRUCTURAL_NAMES — see the note there. Net
+    # effect: the class goes from 1,690 proteins to about 880, VIM, FN1,
+    # DMD and DES all survive, and TTN and SDC1 are gained.
     ("Structural",
-     ["structural protein", "cytoskeleton", "keratin", "collagen",
-      "muscle protein", "cell adhesion"],
+     ["structural protein", "keratin", "collagen", "muscle protein"],
      [],
-     ["collagen", "keratin", "tubulin", "actin", "myosin", "laminin",
-      "fibrillin", "spectrin", "filament", "cadherin", "integrin"]),
+     ["collagen", "keratin", "tubulin", "actin", "myosin", "lamin",
+      "fibrillin", "spectrin", "filament", "cadherin", "integrin"]
+     + STRUCTURAL_NAMES),
 
     ("Enzyme (other)",
      ["oxidoreductase", "lyase", "isomerase", "ligase", "hydrolase",
@@ -320,6 +542,21 @@ FUNCTIONAL_CLASSES = [
 
 FUNCTIONAL_FALLBACK = "Other"
 
+# Gene symbol -> class, applied after the rules have had their say.
+#
+# Keep this list SHORT. It is a patch on a rule, not a substitute for one:
+# anything needing more than a handful of entries is a rule that should be
+# fixed instead. Every entry needs a reason.
+FUNCTION_OVERRIDES = {
+    # Formally an E3 ubiquitin ligase, EC 2.3.2.27, which is what the EC
+    # pass sees — and nobody thinks of BRCA1 as an enzyme. The general fix,
+    # letting the "DNA repair" keyword outrank EC, was measured and is
+    # worse: it also drags in YY1, HSF1, CLOCK, SIRT6, METTL3 and the
+    # ribosomal protein uS3, because that keyword marks any involvement in
+    # repair rather than the protein's job.
+    "BRCA1": "DNA repair",
+}
+
 # Partial credit for the Function column. Without it the column is pure
 # hit-or-miss: 12% green, 88% red, and only 0.52 bits of feedback — the
 # weakest column on the board. Grouping related classes so a near miss
@@ -331,8 +568,11 @@ FUNCTION_GROUPS = {
     "Protease":             "Enzyme",
     "Enzyme (other)":       "Enzyme",
 
-    "Transcription factor": "Gene expression",
-    "RNA-binding":          "Gene expression",
+    # Amber families. The name is internal — it only decides which pairs of
+    # classes count as "close" — so it can be broader than any one label.
+    "Transcription factor": "Nucleic acid",
+    "RNA-binding":          "Nucleic acid",
+    "DNA repair":           "Nucleic acid",
 
     "Ion channel":          "Transport",
     "Transporter":          "Transport",
@@ -341,7 +581,12 @@ FUNCTION_GROUPS = {
     "Signalling":           "Signalling",
     "Immune":               "Signalling",
 
+    "Chromatin":            "Nucleic acid",
+
     "Structural":           "Structural",
+    # An inhibitor of an enzyme is close enough to an enzyme to be worth an
+    # amber: guess a protease against a serpin and you have learned something.
+    "Inhibitor":            "Enzyme",
     "Other":                "Other",
 }
 
@@ -356,9 +601,29 @@ PATHWAY_EXCLUDE = {
     "Drug ADME",
 }
 
-# Kept per protein. Scoring is set-overlap, so more values means more amber
-# and fewer greens; three made an exact match nearly impossible.
+# How many pathways are SHOWN in the clue cell.
+#
+# Which two matters more than how many. They used to be chosen with
+# sorted(paths)[:2], i.e. alphabetically, which is how EGFR came to display
+# "Developmental Biology, Gene expression" while hiding Signal Transduction,
+# and how ATM was labelled an autophagy protein. Players reasoned correctly
+# from wrong clues and gave up.
+#
+# Pathways are now ranked by ANNOTATION WEIGHT: how many distinct Reactome
+# annotations the protein has under each top-level pathway. That is a decent
+# proxy for "what does this protein mostly do". EGFR is 52% Signal
+# Transduction; CDK1 is 66% Cell Cycle; ATM leads with DNA Repair and
+# Autophagy does not reach its top five.
 MAX_PATHWAYS = 2
+
+# How many are COMPARED. Scoring on a slightly wider set than is displayed
+# stops a protein's second-most-characteristic pathway from being invisible
+# to the comparison. Tuned against the entropy report.
+SCORE_PATHWAYS = 4
+
+# Annotation weight below this share of a protein's total is noise rather
+# than biology, and never counts for display, scoring or field membership.
+PATHWAY_MIN_SHARE = 0.05
 
 
 # ----------------------------------------------------------- game rules
@@ -438,7 +703,34 @@ FIELD_EXCLUDE = {
 }
 
 # Below this, a daily rotation repeats too soon to be worth offering.
-FIELD_MIN_SIZE = 50
+FIELD_MIN_SIZE = 40
+
+# Field membership is now strict — a protein joins a field only if that
+# top-level pathway is a real share of its annotations — and strictness has
+# a cost: measured against the famous 3,000 alone, Autophagy has 25 members,
+# Muscle contraction 36 and Sensory Perception 19. All three would be cut,
+# and the fix is not to loosen membership (that is what put ATM in
+# Autophagy) but to look further down the fame list for the proteins that
+# genuinely belong.
+#
+# So field pools are drawn from the best-known 8,000 rather than the 3,000
+# the other modes use. Large fields are unaffected: FIELD_MAX_POOL takes
+# their top 250 by fame and those all sit inside the 3,000 anyway. Only the
+# small fields dig deeper, which is exactly the trade the mode exists to
+# make — someone who picks "Autophagy" knows GABARAPL1.
+#
+# Every protein a field pool reaches has to be a shippable answer, so the
+# build adds them to the game file on top of the 3,000 tier.
+FIELD_SOURCE_MAX_RANK = 8000
+
+# A protein joins a field only if a real share of its Reactome annotations
+# sit under that top-level pathway. Without this, membership was "appears
+# under it at all", which put AKT1 in ELEVEN fields and made ATM an
+# autophagy protein off a single annotation. People picked a field and met
+# answers that had no business being there.
+FIELD_MIN_SHARE = 0.20
+FIELD_MIN_ANNOTATIONS = 3
+FIELD_MAX_PER_PROTEIN = 3
 
 # Above this, a field is really "most of biology" and stops being a
 # usable filter. Immune System has 1,009 members in the 3,000 pool and

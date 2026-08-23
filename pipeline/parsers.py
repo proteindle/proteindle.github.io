@@ -12,15 +12,18 @@ import csv
 import gzip
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import (  # noqa: E402
     RAW, UNIPROT_FIELDS, GENE_AGES_MAP, EGGNOG_LEVEL_MAP,
-    PATHWAY_EXCLUDE, MAX_PATHWAYS, FIELD_EXCLUDE,
+    PATHWAY_EXCLUDE, MAX_PATHWAYS, SCORE_PATHWAYS,
+    PATHWAY_MIN_SHARE, FIELD_EXCLUDE, FIELD_MIN_SHARE,
+    FIELD_MIN_ANNOTATIONS, FIELD_MAX_PER_PROTEIN,
     LOCALIZATION_BUCKETS, LOCALIZATION_FALLBACK, MAX_LOCALIZATIONS,
-    FUNCTIONAL_CLASSES, FUNCTIONAL_FALLBACK,
+    FUNCTIONAL_CLASSES, FUNCTIONAL_FALLBACK, FUNCTION_OVERRIDES,
+    NOT_A_MODIFIER, WORD_GUARDS,
 )
 
 csv.field_size_limit(1 << 30)
@@ -76,13 +79,63 @@ def clean_location(raw):
     return out
 
 
+def _only_groups(rest):
+    """True if `rest` is nothing but balanced (...) groups and whitespace."""
+    depth = 0
+    for ch in rest:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return False
+        elif depth == 0 and not ch.isspace():
+            return False
+    return depth == 0
+
+
+# The two square-bracket suffixes UniProt appends after a finished name.
+_NAME_SUFFIX_RE = re.compile(r"\s*\[(?:Cleaved into|Includes|Contains):.*$",
+                             re.IGNORECASE | re.DOTALL)
+
+
 def short_protein_name(protein_name):
     """
-    UniProt packs extras after the real name: alternatives in parentheses,
-    and processed chains in square brackets, e.g. "Insulin [Cleaved into:
-    Insulin B chain; Insulin A chain]". Cut at the first of either.
+    UniProt packs extras after the real name: alternative names and EC
+    numbers in parentheses, processed chains in square brackets.
+
+    Square brackets are the trap. They mark a suffix in "Insulin [Cleaved
+    into: Insulin B chain; Insulin A chain]" but they are part of the name
+    itself in "Poly [ADP-ribose] polymerase 1", "Superoxide dismutase
+    [Cu-Zn]" and "Isocitrate dehydrogenase [NADP] cytoplasmic". Cutting at
+    every bracket left PARP1 displayed to players as "Poly", and did the
+    same to 176 other proteins.
+
+    Parentheses have exactly the same trap, and it is the more common one.
+    They mark alternative names in "Epidermal growth factor receptor (EC
+    2.7.10.1) (Proto-oncogene c-ErbB-1)" but they are part of the name in
+    "DNA (cytosine-5)-methyltransferase 1", "D(2) dopamine receptor" and
+    "Collagen alpha-1(I) chain". Cutting at the first one shipped DNMT1 as
+    "DNA", DRD2 as "D", NQO1 as "NAD", and — worse — gave COL1A1, COL2A1
+    and COL3A1 the identical display name "Collagen alpha-1", which is
+    three unwinnable rows in the autocomplete.
+
+    What separates them is position, not content: UniProt's alternative
+    names are a run of bracketed groups that continues to the END of the
+    string. So cut at the first parenthesis with nothing but balanced
+    groups after it, and at no other.
     """
-    return re.split(r"\s*[(\[]", protein_name or "")[0].strip()
+    name = _NAME_SUFFIX_RE.sub("", protein_name or "")
+
+    depth = 0
+    for i, ch in enumerate(name):
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth = max(0, depth - 1)
+        elif ch == "(" and depth == 0 and _only_groups(name[i:]):
+            return name[:i].strip()
+    return name.strip()
 
 
 def bucket_locations(location_strings):
@@ -112,18 +165,42 @@ def bucket_locations(location_strings):
     return ordered[:MAX_LOCALIZATIONS]
 
 
-def _compile(patterns):
+def _compile(patterns, name_pass=False):
     """
     Leading word boundary only. Trailing is deliberately omitted so
     'kinase' still catches 'kinases' and 'matrix metallo' catches
     'matrix metalloproteinase-9'.
+
+    A pattern prefixed "re:" is taken as a raw regex instead, for the few
+    rules that need a lookaround — telling "kinase inhibitor" (not a
+    kinase) from "inhibitor of NF-kappa-B kinase" (very much a kinase)
+    cannot be done with a literal.
+
+    Name patterns get two extra guards; keyword patterns get neither,
+    because a UniProt keyword is a controlled term with no prose around it.
+
+      WORD_GUARDS   the handful of patterns whose missing trailing
+                    boundary does real damage ('cytokine' on 'cytokinesis')
+      NOT_A_MODIFIER  refuse the match when the pattern is modifying some
+                    other head noun ('receptor-associated', 'kinase
+                    substrate'). Applied per occurrence, so a name that
+                    uses the word both ways still matches on the good one.
     """
-    return [re.compile(r"\b" + re.escape(p)) for p in patterns]
+    out = []
+    for p in patterns:
+        if p.startswith("re:"):
+            out.append(re.compile(p[3:]))
+            continue
+        rx = r"\b" + re.escape(p)
+        if name_pass:
+            rx += WORD_GUARDS.get(p, "") + NOT_A_MODIFIER
+        out.append(re.compile(rx))
+    return out
 
 
 # Precompiled once: 20k proteins x ~100 patterns is enough work to matter.
 _RULES = [
-    (cls, _compile(kw), ec, _compile(names))
+    (cls, _compile(kw), ec, _compile(names, name_pass=True))
     for cls, kw, ec, names in FUNCTIONAL_CLASSES
 ]
 
@@ -164,12 +241,17 @@ def classify_function(keywords, ec, protein_name, go_terms):
         if _hit(kw_rx, kw):
             return cls
 
-    # Last resort: GO terms, which are noisy enough to only consult when
-    # everything else came up empty.
-    for cls, _kw, _ec, name_rx in _RULES:
-        if _hit(name_rx, go):
-            return cls
-
+    # There used to be a last-resort pass over GO terms here. It was
+    # measurably worse than saying nothing: GO strings mix molecular
+    # function with process and location, so "protein phosphatase binding"
+    # made BCL2 a phosphatase, "protein kinase binding" made alpha-
+    # synuclein, VHL, leptin and caveolin-1 kinases, and a mention of
+    # repair made BAX and MCL1 DNA repair proteins. Twenty-two of the 365
+    # daily answers carried a class that was simply false.
+    #
+    # "Other" is a real answer — it tells the player this is not an enzyme,
+    # a receptor or a channel — and an honest one is worth more than a
+    # confident wrong one in a game where people reason from the clue.
     return FUNCTIONAL_FALLBACK
 
 
@@ -222,10 +304,22 @@ def parse_uniprot():
             protein_name = get(row, "protein_name")
             short_name = short_protein_name(protein_name)
 
+            # For 68 entries UniProt lists several gene symbols under one
+            # accession, because the genes are duplicates coding an
+            # identical protein: "H4C1; H4C2; H4C3; ...". Printed whole
+            # that is a row nobody can read and nobody can type. Keep the
+            # first as the symbol and let the others stay searchable.
+            gene = get(row, "gene_primary")
+            if ";" in gene:
+                parts = [g.strip() for g in gene.split(";") if g.strip()]
+                gene = parts[0] if parts else ""
+                synonyms = parts[1:] + synonyms
+            synonyms = [s for s in synonyms if s and s != ";"]
+
             out[acc] = {
                 "accession": acc,
                 "entry_name": get(row, "id"),
-                "gene": get(row, "gene_primary"),
+                "gene": gene,
                 "synonyms": synonyms,
                 "protein_name": short_name,
                 "protein_name_full": protein_name,
@@ -240,8 +334,10 @@ def parse_uniprot():
                 "ensps": ensps[:4],
                 "disease": bool(MIM_RE.search(disease_txt)),
                 "disease_names": _disease_names(disease_txt),
-                "functional_class": classify_function(
-                    keywords, get(row, "ec"), protein_name, get(row, "go")
+                "functional_class": FUNCTION_OVERRIDES.get(
+                    gene,
+                    classify_function(keywords, get(row, "ec"),
+                                      protein_name, get(row, "go")),
                 ),
             }
     print(f"  [ok  ] UniProt: {len(out)} reviewed human entries")
@@ -313,7 +409,20 @@ def parse_gene_info():
 # ------------------------------------------------------------ Reactome
 
 def parse_reactome():
-    """UniProt accession -> [top-level pathway names]."""
+    """
+    Returns {accession: {"display": [...], "score": [...], "fields": [...]}}.
+
+    All three come from one measurement: ANNOTATION WEIGHT, the number of
+    distinct Reactome annotations a protein has under each top-level
+    pathway. It is a serviceable proxy for what the protein mostly does.
+    EGFR is 52% Signal Transduction, CDK1 66% Cell Cycle, BRAF 72% Signal
+    Transduction.
+
+    The previous version took sorted(names)[:2] — alphabetically. That hid
+    Signal Transduction from EGFR behind Developmental Biology, hid
+    Metabolism from SREBF1 behind Circadian clock, and labelled ATM an
+    autophagy protein. Players reasoned correctly from wrong clues.
+    """
     mapping_path = RAW / "UniProt2Reactome_All_Levels.txt"
     relation_path = RAW / "ReactomePathwaysRelation.txt"
     names_path = RAW / "ReactomePathways.txt"
@@ -321,7 +430,6 @@ def parse_reactome():
     if not mapping_path.exists():
         return _missing("UniProt2Reactome_All_Levels.txt")
 
-    # child -> parent, human only
     parent = {}
     if relation_path.exists():
         with _open(relation_path) as fh:
@@ -341,47 +449,83 @@ def parse_reactome():
                 if len(p) >= 3 and p[2] == "Homo sapiens":
                     names[p[0]] = p[1]
 
-    def to_top(sid, _seen=None):
-        seen = _seen or set()
-        while sid in parent and sid not in seen:
-            seen.add(sid)
-            sid = parent[sid]
-        return sid
+    _top_cache = {}
 
-    acc_pathways = defaultdict(set)
+    def to_top(sid):
+        if sid in _top_cache:
+            return _top_cache[sid]
+        seen, cur = set(), sid
+        while cur in parent and cur not in seen:
+            seen.add(cur)
+            cur = parent[cur]
+        _top_cache[sid] = cur
+        return cur
+
+    weight = defaultdict(Counter)
     with _open(mapping_path) as fh:
         for line in fh:
             p = line.rstrip("\n").split("\t")
             if len(p) < 6 or p[5] != "Homo sapiens":
                 continue
-            acc, sid, label = p[0], p[1], p[3]
+            acc, sid = p[0], p[1]
             if not sid.startswith("R-HSA-"):
                 continue
-            top = to_top(sid)
-            name = names.get(top, label)
-            acc_pathways[acc].add(name)
+            weight[acc][names.get(to_top(sid), p[3])] += 1
 
-    # Two different products from the same walk:
+    # Baseline share of each top-level across the whole annotation corpus.
+    # Used to rank a protein's FIELDS by enrichment rather than raw count:
+    # "Signal Transduction" is 13% of every annotation in Reactome, so a
+    # protein that is 20% Signal Transduction is unremarkable, whereas one
+    # that is 20% Autophagy (0.8% baseline) is an autophagy protein.
     #
-    #   display — the Pathway clue column. Excludes filing-cabinet
-    #             categories and is capped, because a cell listing eight
-    #             pathways is not a clue.
-    #   fields  — every top-level pathway the protein belongs to, used to
-    #             filter answers by the player's field. Uncapped, because a
-    #             DNA-repair person should get DNA-repair proteins whether
-    #             or not that pathway made the protein's top two.
-    display, fields = {}, {}
-    for acc, paths in acc_pathways.items():
-        keep = sorted(p for p in paths if p not in PATHWAY_EXCLUDE)
-        if keep:
-            display[acc] = keep[:MAX_PATHWAYS]
-        usable = sorted(p for p in paths if p not in FIELD_EXCLUDE)
-        if usable:
-            fields[acc] = usable
+    # This only decides WHICH of the qualifying fields to keep when a
+    # protein has more than FIELD_MAX_PER_PROTEIN of them. Raw count still
+    # decides the displayed pathways, where the question is the different
+    # one of "what does this protein spend its time doing".
+    corpus = Counter()
+    for counts in weight.values():
+        corpus.update(counts)
+    corpus_total = sum(corpus.values()) or 1
+    baseline = {n: c / corpus_total for n, c in corpus.items()}
 
-    print(f"  [ok  ] Reactome: pathways for {len(display)} accessions, "
-          f"field tags for {len(fields)}")
-    return display, fields
+    out = {}
+    for acc, counts in weight.items():
+        total = sum(counts.values())
+        if not total:
+            continue
+        # Ranked by weight, noise floor applied, filing cabinets removed.
+        ranked = [(n, c) for n, c in counts.most_common()
+                  if c / total >= PATHWAY_MIN_SHARE]
+
+        shown = [n for n, _ in ranked if n not in PATHWAY_EXCLUDE]
+        scored = shown[:SCORE_PATHWAYS]
+
+        eligible = [(n, c) for n, c in ranked if n not in FIELD_EXCLUDE]
+        qualified = [(n, c) for n, c in eligible
+                     if c >= FIELD_MIN_ANNOTATIONS
+                     and c / total >= FIELD_MIN_SHARE]
+        qualified.sort(
+            key=lambda t: (t[1] / total) / baseline.get(t[0], 1.0),
+            reverse=True,
+        )
+        fields = [n for n, _ in qualified[:FIELD_MAX_PER_PROTEIN]]
+        # A protein always belongs to whatever it does most, even if that
+        # falls under the share threshold because its work is spread wide.
+        if not fields and eligible:
+            fields = [eligible[0][0]]
+
+        out[acc] = {
+            "display": shown[:MAX_PATHWAYS],
+            "score": scored,
+            "fields": fields,
+        }
+
+    n_disp = sum(1 for v in out.values() if v["display"])
+    n_fld = sum(1 for v in out.values() if v["fields"])
+    per = sum(len(v["fields"]) for v in out.values()) / max(n_fld, 1)
+    print(f"  [ok  ] Reactome: {n_disp} accessions with a pathway, "
+          f"{n_fld} with field tags ({per:.1f} fields each on average)")
+    return out
 
 
 # ---------------------------------------------------------------- HGNC

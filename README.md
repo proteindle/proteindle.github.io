@@ -6,13 +6,17 @@ Guess the human protein. Every column is a clue.
 
 ![The board after three guesses](assets/screenshot.png)
 
-A daily puzzle shaped like Wordle, except the answer is one of ~3,000 human
-proteins and the feedback is biology: how long it is, how far back in
-evolution it goes, where in the cell it sits, what it does, which pathway it
-belongs to, which chromosome it is on, and whether it is linked to disease.
+A daily puzzle shaped like Wordle, except the answer is a human protein and
+the feedback is biology: how long it is, how far back in evolution it goes,
+where in the cell it sits, what it does, which pathway it belongs to, which
+chromosome it is on, and whether it is linked to disease.
+
+Guess any of the 20,190 reviewed human proteins. Answers are drawn from the
+well-known ones — nobody wants to guess ZNF493 — but the thing you type does
+not have to be in that set.
 
 Pick your field on the first visit — DNA repair, immunology, metabolism, one
-of 24 — and every answer comes from it, with its own daily rotation. A
+of 23 — and every answer comes from it, with its own daily rotation. A
 specialist gets the proteins they actually know.
 
 No accounts, no tracking, no backend. It is a static page and a JSON file.
@@ -37,6 +41,13 @@ overlap without being identical. On **Function**, a different class in the
 same family — guess a kinase when the answer is a protease and you get
 amber, because both are enzymes.
 
+Under each guess is its protein **family**, which is not scored and not in
+the shared grid. It turns green when it is the answer's family and amber
+when the two are related. Guess a receptor tyrosine kinase when the answer
+is a different one and every column can still come back red, because the
+columns measure size, age, location and pathway rather than relatedness —
+the family line is the part a biologist actually reasons with.
+
 Eight guesses on the daily. Free play and Hard are unlimited, with a give-up
 button and an **Easier one** button that draws from well-known proteins and
 from dailies that have already run.
@@ -54,6 +65,11 @@ from dailies that have already run.
 | **Pathway** | multi-value | Reactome, rolled up to top-level pathways |
 | **Chromosome** | numeric ↑↓ | HGNC cytogenetic location |
 | **Disease-linked** | boolean | UniProt disease annotations with an OMIM anchor |
+
+Disease-linked means UniProt lists at least one named inherited or acquired
+disease caused by variants in this protein — not "has been studied in a
+disease", which is nearly everything. A quarter of the proteome qualifies;
+among answers, which are the well-studied end, it is closer to half.
 
 ### The conservation ladder
 
@@ -82,19 +98,35 @@ with none dominating.
 ## Fields
 
 Fields are Reactome's top-level pathways, which sit at about the granularity
-people use to describe their own work. Three rules shape the list:
+people use to describe their own work.
+
+Membership is measured, not asserted. A protein joins a field only if a real
+share of its Reactome annotations sit under that top-level pathway — at
+least three of them, and at least a fifth of its total. Without that bar,
+membership meant "appears under it at all", which put AKT1 in eleven fields
+and made ATM an autophagy protein on the strength of four annotations out of
+sixty-one. Where a protein clears the bar in more than three fields, the
+three kept are the most *enriched* ones: its share under a pathway measured
+against that pathway's share of Reactome as a whole, so a small field can
+win a slot from Signal Transduction, which is 13% of every annotation in the
+database.
+
+Three rules then shape the list itself:
 
 - Categories nobody identifies with are dropped. "Disease" spans a third of
   the proteome; "Drug ADME" is plumbing.
-- Anything under 50 members is dropped — its daily rotation would repeat too
-  soon.
+- Anything under 40 members is dropped — its daily rotation would repeat too
+  soon. Circadian clock and DNA Replication lose out here.
 - Anything over 250 is capped by how well known its members are. Immune
-  System has ~1,000 and Signal Transduction ~1,000; uncapped, they stop
-  being a filter at all.
+  System has ~1,300 candidates and Signal Transduction ~1,500; uncapped,
+  they stop being a filter at all.
 
-Field pools are drawn from all 3,000 proteins rather than the famous 365, on
-the reasoning that a specialist knows the less-famous proteins in their own
-area — that knowledge is what the mode exists to reward.
+Field pools are drawn from the best-known 8,000 proteins rather than the
+3,000 the other modes use, on the reasoning that a specialist knows the
+less-famous proteins in their own area — that knowledge is what the mode
+exists to reward. It is also what keeps the small fields alive: Autophagy
+has 25 members inside the famous 3,000 and 46 inside 8,000. Large fields are
+unaffected, since their top 250 by fame sit inside the 3,000 either way.
 
 ---
 
@@ -110,6 +142,12 @@ python pipeline/download.py
 python pipeline/build.py
 python serve.py
 ```
+
+This writes two files. `web/data/proteins.json` holds every answer plus the
+puzzle calendar and is what the page waits for;
+`web/data/proteins-rest.json` holds the other 15,859 proteins, which are
+guessable but never the answer, and is fetched after the board is already
+up.
 
 Python 3.8+ and nothing else — the pipeline is pure standard library, so
 there is no virtualenv and no `pip install`. Use `serve.py` rather than
@@ -149,6 +187,15 @@ and the pools are cut from the top of that list: 365 for the daily (all
 seven columns present), 1,000 for free play, 3,000 for hard. The build
 prints the least famous protein in each tier as a sanity check.
 
+**Guessing is not ranked at all.** Several people reported that their own
+protein was missing when it was in the database and the search could not
+find it, so the search matches whole words at word boundaries across gene
+symbol, synonyms, protein name and description, in any order: "beta catenin"
+finds CTNNB1, "SLC" finds the transporters, "collagen" leads with a collagen
+rather than a collagenase. Word matches beat prefix matches and the name
+beats the description, so the ranking prefers the protein that is called
+what you typed over the one that is merely described that way.
+
 **One entry per gene symbol.** UniProt carries several reviewed entries for
 some genes — GNAS has four; CDKN2A has p16INK4a and p14ARF separately. Two
 autocomplete rows both reading "NRXN1" is a coin flip the player cannot win,
@@ -166,6 +213,13 @@ epoch and indexes into it, so every player sees the same protein. Field
 rotations are seeded from the field key with `zlib.crc32` rather than
 Python's `hash()`, which is salted per process and would silently reshuffle
 everyone's puzzles on each rebuild.
+
+**The calendar is canon only as far as it has been played.** `data/schedule.json`
+records every rotation and how many days of it have gone out. Days already
+played never move — somebody has a shared grid of them — but the tail is a
+permutation nobody has seen, so it is regenerated on every build. Freezing
+the whole thing would lock a year of puzzles to whatever the pools looked
+like on launch day.
 
 A determined player can read tomorrow's answer out of the JSON. Every game
 in this genre can be beaten that way; it is not worth engineering around.

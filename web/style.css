@@ -456,6 +456,32 @@ main { max-width: 60rem; margin: 0 auto; }
   overflow: hidden;
 }
 
+/* The family of the protein you guessed. Not a scored column — it tints
+   only when it relates to the answer, and stays quiet otherwise. */
+.subject-family {
+  margin-top: .18rem;
+  font-size: .62rem;
+  line-height: 1.25;
+  color: var(--text-dim);
+  border-left: 2px solid var(--border);
+  padding-left: .35rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.subject-family.correct {
+  color: var(--correct-edge);
+  border-left-color: var(--correct-edge);
+  font-weight: 600;
+}
+
+.subject-family.partial {
+  color: var(--partial-edge);
+  border-left-color: var(--partial-edge);
+}
+
 /* ------------------------------------------------------------ legend */
 
 .legend {
@@ -701,6 +727,7 @@ main { max-width: 60rem; margin: 0 auto; }
   .cell.subject { padding: .4rem .45rem; }
   .subject-gene { font-size: .82rem; }
   .subject-name { font-size: .6rem; -webkit-line-clamp: 2; }
+  .subject-family { font-size: .55rem; -webkit-line-clamp: 2; }
 
   /* A fade on the trailing edge is the only honest cue that there is more
      table to the right. */
@@ -739,6 +766,7 @@ main { max-width: 60rem; margin: 0 auto; }
   .board { min-width: 42rem; }
   .board thead th:first-child { width: 6.5rem; }
   .subject-name { -webkit-line-clamp: 1; }
+  .subject-family { -webkit-line-clamp: 1; }
 }
 
 /* ------------------------------------------------------- field picker */

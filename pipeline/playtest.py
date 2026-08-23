@@ -143,6 +143,23 @@ def main():
             txt = page.inner_text("#suggestions")
             check("alias 'P53' finds TP53", "TP53" in txt, txt[:60])
 
+        # The whole proteome has to be guessable, not just the answers.
+        page.wait_for_function("state.restLoaded === true", timeout=20000)
+        n_index = page.evaluate("state.searchIndex.length")
+        check("every reviewed protein is searchable",
+              n_index > 3 * len(proteins), f"{n_index} indexed")
+
+        # Words in any order, matched at word starts. This is the one that
+        # sent people away thinking their protein was missing.
+        for query, want in (("beta catenin", "CTNNB1"),
+                            ("collagen", "COL1A1"),
+                            ("SLC", "SLC"),
+                            ("laminin", "LAM")):
+            hits = page.evaluate(
+                f"search({query!r}, 5).map((e) => e.p.g)")
+            check(f"free-text search: {query!r} finds {want}",
+                  any(g.startswith(want) for g in hits), str(hits))
+
         # ------------------------------------------------------- guessing
         print("\nguessing\n")
         target_acc = data["dailyOrder"][0]  # day index may differ; recompute
@@ -171,6 +188,12 @@ def main():
               all(any(s in c for s in ("correct", "partial", "wrong"))
                   for c in classes),
               str(classes))
+
+        fam_line = page.query_selector("#board-body .subject-family")
+        guessed = next(p for p in proteins if p["g"] == wrong[0]["g"])
+        check("the family of the guess is shown",
+              (fam_line is not None) == bool(guessed.get("fam")),
+              f"fam={guessed.get('fam')!r}")
 
         glyphs = page.query_selector_all("#board-body .cell-glyph")
         check("cells carry a non-colour glyph too", len(glyphs) == 7,
