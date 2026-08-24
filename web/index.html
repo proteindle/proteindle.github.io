@@ -254,16 +254,9 @@
       <h2 class="card-prompt" id="card-prompt"></h2>
       <p class="card-sub" id="card-sub"></p>
 
-      <div class="choices" id="card-choices" hidden></div>
+      <div class="clues" id="card-clues" hidden></div>
 
-      <div class="card-flip" id="card-flip" hidden>
-        <button id="card-reveal" class="primary-btn">Show answer</button>
-        <p class="card-answer" id="card-answer" hidden></p>
-        <div class="grade" id="card-grade" hidden>
-          <button class="ghost-btn grade-miss" data-grade="miss">Missed</button>
-          <button class="primary-btn grade-got" data-grade="got">Got it</button>
-        </div>
-      </div>
+      <div class="choices" id="card-choices" hidden></div>
 
       <p class="card-feedback" id="card-feedback" hidden></p>
       <div class="card-next" hidden id="card-next-wrap">
@@ -369,10 +362,6 @@
           <option value="40">40</option>
           <option value="0">No limit</option>
         </select>
-      </label>
-      <label class="setting-row">
-        <span>Multiple choice where possible</span>
-        <input type="checkbox" id="set-mc" checked>
       </label>
     </fieldset>
 

@@ -1111,7 +1111,13 @@ body.wide main { max-width: 82rem; }
   font-size: .85rem;
 }
 
-.clues { display: flex; flex-direction: column; gap: .4rem; }
+.clues {
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  margin: 0 0 1rem;
+  text-align: left;
+}
 
 .clue {
   display: flex;
@@ -1131,7 +1137,7 @@ body.wide main { max-width: 82rem; }
   align-self: center;
 }
 
-.clue-v { font-weight: 600; text-align: right; }
+.clue-v { font-weight: 600; text-align: right; overflow-wrap: anywhere; }
 
 .choices {
   display: grid;
@@ -1148,7 +1154,7 @@ body.wide main { max-width: 82rem; }
   appearance: none;
   display: flex;
   flex-direction: row;
-  align-items: center;
+  align-items: flex-start;
   gap: .7rem;
   min-width: 0;
   text-align: left;
@@ -1215,8 +1221,11 @@ body.wide main { max-width: 82rem; }
 .choice-label {
   font-weight: 600;
   font-size: .92rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* Options are whole pathway sets and lists of disease names now, not
+     single words. Wrapping beats an ellipsis here, because what
+     distinguishes two options is often at the end of the string. */
+  overflow-wrap: anywhere;
+  line-height: 1.35;
 }
 .choice-sub {
   font-size: .74rem;

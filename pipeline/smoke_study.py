@@ -138,29 +138,31 @@ def run(bundle=False, shots=False):
         check("a card is showing", page.is_visible("#card"))
         shot("train-card")
 
-        # Answer 6 cards, whichever form each takes.
-        answered = mc = flip = 0
+        # Answer 6 cards. Every card is multiple choice now — the
+        # self-graded flip is gone, so a run that finds no options is a
+        # failure rather than a different card shape.
+        answered = 0
+        clued = 0
         for _ in range(6):
             page.wait_for_timeout(250)
-            if page.is_visible("#card-choices") and \
-                    page.eval_on_selector_all("#card-choices .choice",
-                                              "n => n.length") > 0:
-                page.click("#card-choices .choice >> nth=0")
-                mc += 1
-            elif page.is_visible("#card-reveal"):
-                page.click("#card-reveal")
-                page.wait_for_timeout(150)
-                page.click(".grade-got")
-                flip += 1
-            else:
+            n_opts = page.eval_on_selector_all("#card-choices .choice",
+                                               "n => n.length")
+            if not n_opts:
                 break
+            check(f"card {answered + 1} offers 3 or more options", n_opts >= 3,
+                  f"{n_opts} options")
+            if page.is_visible("#card-clues"):
+                clued += 1
+            page.click("#card-choices .choice >> nth=0")
             answered += 1
             page.wait_for_timeout(250)
             if page.is_visible("#card-next"):
                 page.click("#card-next")
         check("cards can be answered", answered >= 5, f"{answered} answered")
-        check("both card forms appear over a run", mc > 0,
-              f"mc={mc} flip={flip}")
+        check("cards carry clues to reason from", clued >= 4,
+              f"{clued} of {answered} had a clue block")
+        check("no self-graded card is reachable",
+              page.eval_on_selector_all(".grade-got", "n => n.length") == 0)
 
         streak = page.inner_text("#train-stats")
         check("streak is tracked", "day streak" in streak, streak)
@@ -193,13 +195,7 @@ def run(bundle=False, shots=False):
                 // querySelector.
                 const vis = (el) => el && el.offsetParent !== null;
                 const c = document.querySelector('#card-choices .choice');
-                if (vis(c)) { c.click(); }
-                else {
-                    const r = document.getElementById('card-reveal');
-                    if (vis(r)) { r.click(); }
-                    const g = document.querySelector('.grade-got');
-                    if (vis(g)) g.click();
-                }
+                if (vis(c)) c.click();
                 const n = document.getElementById('card-next');
                 if (vis(n)) n.click();
                 await new Promise(r => setTimeout(r, 12));

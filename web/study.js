@@ -36,6 +36,11 @@ const srsKey = (id) => `proteindle:study:srs:${id}`;
 
 const PAGE = 100;          // browse rows per chunk
 
+/* How many clues a card carries. Six rather than four because the whole
+   value of this mode over a plain flashcard is that the answer is
+   reasonable rather than recalled cold. */
+const MAX_CLUES = 6;
+
 /* THE PLAYABILITY RULE, inherited from Bio Grid, where it is stated as:
    a criterion earns its place only if a working biologist, asked "name a
    protein that is X", could answer from memory — not "could look it up".
@@ -51,9 +56,8 @@ const PAGE = 100;          // browse rows per chunk
    criteria and two length criteria for the same reason, and has a test
    so they cannot come back. So does this — see smoke_study.py.
 
-   `closed`  a small, known value set, so multiple choice is possible.
    `ask`     may be the subject of a question.
-   `clue`    may appear as a clue in the attributes-to-protein direction.
+   `clue`    may appear as a clue alongside a question.
 
    The two are not the same. "Disease-linked: yes" is a fair clue and a
    terrible question — a coin flip that most famous proteins answer yes
@@ -61,24 +65,24 @@ const PAGE = 100;          // browse rows per chunk
    disease is the opposite: a real question, and a clue that would simply
    hand over the answer. */
 const COLUMNS = [
-  { key: 'fn',   label: 'Function',       closed: true,  ask: true,  clue: true,
+  { key: 'fn',   label: 'Function',       ask: true,  clue: true,
     q: 'What kind of protein is it?' },
-  { key: 'loc',  label: 'Localization',   closed: false, ask: true,  clue: true,
+  { key: 'loc',  label: 'Localization',   ask: true,  clue: true,
     q: 'Where in the cell is it?' },
-  { key: 'pw',   label: 'Pathway',        closed: false, ask: true,  clue: true,
+  { key: 'pw',   label: 'Pathway',        ask: true,  clue: true,
     q: 'Which pathway does it work in?' },
   // Ask-only, and for the same reason as the named disease: the family
   // string usually contains the answer. "Cytochrome P450 family" against
   // CYP2C19 / IL6 / MTHFR / FASLG is not a question, and neither is
   // "IL-1 family" against IL1B. It is a good thing to be asked and a
   // useless thing to be told.
-  { key: 'fam',  label: 'Family',         closed: false, ask: true,  clue: false,
+  { key: 'fam',  label: 'Family',         ask: true,  clue: false,
     q: 'Which protein family?' },
-  { key: 'con',  label: 'Conservation',   closed: true,  ask: true,  clue: true,
+  { key: 'con',  label: 'Conservation',   ask: true,  clue: true,
     q: 'How deeply conserved is it?' },
-  { key: 'disn', label: 'Disease',        closed: false, ask: true,  clue: false,
+  { key: 'disn', label: 'Disease',        ask: true,  clue: false,
     q: 'Which disease is it linked to?' },
-  { key: 'dis',  label: 'Disease-linked', closed: true,  ask: false, clue: true,
+  { key: 'dis',  label: 'Disease-linked', ask: false, clue: true,
     q: '' },
 ];
 
@@ -110,18 +114,18 @@ const DIRECTIONS = [
     note: 'TP53 — what is the protein called?' },
 ];
 
-/* v2 dropped the chromosome and length cards. A returning player has the
-   old set in localStorage, and merging it forward would quietly resurrect
-   them, so a stored config without the current version is discarded
-   rather than migrated — there are four booleans in it, not a document. */
-const SETTINGS_VERSION = 2;
+/* Bumped whenever the shape changes. v2 dropped the chromosome and
+   length cards; v3 dropped the self-graded flip, so the "multiple choice
+   where possible" toggle went with it. A stored config from an older
+   version is discarded rather than migrated — it holds three settings,
+   not a document, and migrating would quietly resurrect cut cards. */
+const SETTINGS_VERSION = 3;
 
 const DEFAULTS = {
   v: SETTINGS_VERSION,
   cols: ASKABLE.slice(),
   dirs: ['p2a', 'a2p'],
   limit: 20,
-  mc: true,
 };
 
 const S = {
@@ -180,6 +184,21 @@ function sample(arr, n, exclude) {
 
 const db = () => window.Proteindle && window.Proteindle.state;
 const ladderLabel = (k) => (db() && db().ladderLabel[k]) || k || '—';
+
+/* Order-independent identity for a column's value.
+
+   Localization and pathway are SETS, and their display order comes from
+   annotation weight, so two proteins can carry the same pair the other
+   way round. Deduplicating on the display string alone offered
+   "Immune System · DNA Repair" and "DNA Repair · Immune System" as two
+   different options on the same card, one of which had to be marked
+   wrong for being the right answer written backwards. */
+function keyOf(p, key) {
+  if (key === 'loc' || key === 'pw' || key === 'disn') {
+    return (p[key] || []).slice().sort().join('|');
+  }
+  return valueOf(p, key);
+}
 
 /* The display value for a column, as a string a person can read. */
 function valueOf(p, key) {
@@ -451,8 +470,10 @@ function presetDecks() {
   const st = db();
   const out = [];
 
+  // `basis` is the column the deck was built on, so a card never asks a
+  // question the deck already answers. Fame decks are built on nothing.
   out.push({ group: 'Best known', decks: [50, 100, 250, 500].map((n) => ({
-    id: `top${n}`, label: `Top ${n} by papers`,
+    id: `top${n}`, label: `Top ${n} by papers`, basis: [],
     accs: S.all.filter((p) => p.rank).sort((a, b) => a.rank - b.rank)
       .slice(0, n).map((p) => p.a),
   })) });
@@ -465,11 +486,13 @@ function presetDecks() {
   });
   out.push({ group: 'By function', decks: Array.from(byFn.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([fn, accs]) => ({ id: `fn:${fn}`, label: fn, accs })) });
+    .map(([fn, accs]) => ({ id: `fn:${fn}`, label: fn, basis: ['fn'], accs })) });
 
   const fields = (st.db && st.db.fields) || [];
+  // Fields ARE Reactome top-level pathways, so a field deck is a pathway
+  // deck and must not ask which pathway its members work in.
   out.push({ group: 'By field', decks: fields.map((f) => ({
-    id: `fld:${f.key}`, label: f.label,
+    id: `fld:${f.key}`, label: f.label, basis: ['pw'],
     accs: S.all.filter((p) => (p.fld || []).includes(f.key)).map((p) => p.a),
   })).filter((d) => d.accs.length >= 10) });
 
@@ -502,9 +525,17 @@ function buildDeckPicker() {
 
 function deckById(id) {
   if (id === '__filter') {
+    const f = currentFilters();
+    const basis = [];
+    if (f.fn) basis.push('fn');
+    if (f.con) basis.push('con');
+    if (f.loc) basis.push('loc');
+    if (f.dis) basis.push('dis');
+    if (f.fld) basis.push('pw');      // a field is a Reactome pathway
     return {
       id: `filter:${filterLabel()}`,
       label: filterLabel(),
+      basis,
       accs: S.browse.rows.map((p) => p.a),
     };
   }
@@ -516,6 +547,10 @@ function deckById(id) {
 }
 
 function setDeck(deck, persist = true) {
+  // A deck saved before `basis` existed has none; an empty list is the
+  // safe reading, since the redundancy measurement still catches the
+  // worst of it.
+  if (!deck.basis) deck.basis = [];
   S.deck = deck;
   S.srs = load(srsKey(deck.id)) || {};
   S.session = null;
@@ -627,70 +662,172 @@ function askableColumns(p) {
                             && hasValue(p, c.key));
 }
 
-/* Clues for the attributes-to-protein direction. A different list: the
-   named disease is ask-only because it would hand over the answer, and
-   the disease yes/no is clue-only because as a question it is a coin
-   flip. Not filtered by settings — turning off a card type should not
-   also strip the board the other direction reasons from. */
+/* Clues. A different list from the questions: the named disease and the
+   family are ask-only because both hand over the answer, and the disease
+   yes/no is clue-only because as a question it is a coin flip. Not
+   filtered by settings — turning off a card type should not also strip
+   the board the other direction reasons from. */
 function clueColumns(p) {
   return COLUMNS.filter((c) => c.clue && hasValue(p, c.key));
 }
 
-function buildCard() {
-  const sess = S.session;
-  if (!sess || !sess.queue.length) return null;
-  const acc = sess.queue[0];
-  const p = db().byAccession.get(acc);
-  if (!p) { sess.queue.shift(); return buildCard(); }
+/* Deck members, resolved once per card rather than per column. */
+function deckMembers() {
+  return S.deck.accs.map((a) => db().byAccession.get(a)).filter(Boolean);
+}
 
-  const dirs = S.settings.dirs.filter((d) => {
-    if (d === 'g2n') return !!p.n;
-    if (d === 'p2a') return askableColumns(p).length > 0;
-    if (d === 'a2p') return clueColumns(p).length > 0;
-    return false;
+/* How much of the deck shares this protein's value for a column.
+   1 means every card has the same answer, which makes it a question with
+   no information in it. */
+function deckShare(members, p, key) {
+  if (!members.length) return 0;
+  const v = keyOf(p, key);
+  let n = 0;
+  for (const q of members) {
+    if (hasValue(q, key) && keyOf(q, key) === v) n++;
+  }
+  return n / members.length;
+}
+
+/* Columns a question would be pointless on, for THIS deck.
+   Two ways a column can be pointless:
+
+     - the deck was built on it. A deck of Function = DNA repair asking
+       "DDB2 — what kind of protein is it?" answers itself, and no amount
+       of good distractors saves it. Decks therefore record what they
+       were filtered on, and field decks count as pathway decks because
+       fields ARE Reactome top-level pathways.
+     - most of the deck happens to share the answer anyway. Every protein
+       in a DNA repair deck sits under the DNA Repair pathway, which the
+       basis cannot know because nobody filtered on it. Measured instead. */
+const REDUNDANT_SHARE = 0.6;
+
+function pointlessColumns(members, p) {
+  const out = new Set(S.deck.basis || []);
+  COLUMNS.forEach((c) => {
+    if (deckShare(members, p, c.key) >= REDUNDANT_SHARE) out.add(c.key);
   });
-  if (!dirs.length) { sess.queue.shift(); return buildCard(); }
-  const dir = dirs[Math.floor(Math.random() * dirs.length)];
+  return out;
+}
 
-  if (dir === 'g2n') {
-    return {
-      p, dir, kicker: 'Name the protein',
-      prompt: p.g, sub: p.d ? esc(p.d) : '',
-      answer: p.n, choices: null,
-    };
+/* Build multiple-choice options for one column, or null if this deck
+   cannot supply enough plausible wrong answers to make a question. */
+function optionsFor(p, col, members) {
+  const answer = valueOf(p, col.key);
+  const answerKey = keyOf(p, col.key);
+  // Keyed by identity so an option cannot be the answer reordered; the
+  // value is the first spelling seen, which is what gets shown.
+  const byKey = new Map();
+  members.forEach((q) => {
+    if (!hasValue(q, col.key)) return;
+    const k = keyOf(q, col.key);
+    if (k !== answerKey && !byKey.has(k)) byKey.set(k, valueOf(q, col.key));
+  });
+  const values = new Set(byKey.values());
+
+  let others;
+  if (col.key === 'fn') {
+    // Distractors from the same amber family first. The game already
+    // groups Kinase/Protease/Phosphatase as "Enzyme" and
+    // Receptor/Signalling/Immune as "Signalling"; reusing that turns
+    // "Protease / Phosphatase / Ion channel / Signalling" — where the
+    // answer is the only plausible one — into a choice between four
+    // things it could actually be. A near miss is where the learning is.
+    const groups = (db().db && db().db.functionGroups) || {};
+    const near = Array.from(values).filter(
+      (v) => groups[v] && groups[v] === groups[answer]);
+    const far = Array.from(values).filter((v) => near.indexOf(v) === -1);
+    others = sample(near, 3);
+    if (others.length < 3) others = others.concat(sample(far, 3 - others.length));
+  } else {
+    others = sample(Array.from(values), 3);
   }
 
-  if (dir === 'a2p') {
-    // Attributes in, protein out.
-    //
-    // Which clues to show is the whole difficulty of this direction. A
-    // deck built by filtering Browse to Function = Chromatin has the same
-    // function for every card, so leading with "Function: Chromatin" tells
-    // the player nothing and wastes the most prominent line. Columns are
-    // therefore ranked by how FEW deck members share the target's value,
-    // and the most discriminating ones are shown.
-    const members = S.deck.accs.map((a) => db().byAccession.get(a))
-      .filter(Boolean);
-    const shareCount = (c) => members.reduce((n, q) =>
-      n + (hasValue(q, c.key) && valueOf(q, c.key) === valueOf(p, c.key)
-           ? 1 : 0), 0);
-    const ranked = clueColumns(p)
-      .map((c) => ({ c, share: shareCount(c) }))
-      .sort((a, b) => a.share - b.share);
-    // Anything every single card shares is pure noise; drop it unless
-    // dropping it would leave nothing to go on.
-    const useful = ranked.filter((r) => r.share < members.length);
-    const cols = (useful.length ? useful : ranked).slice(0, 4).map((r) => r.c);
-    const clues = cols.map((c) =>
-      `<span class="clue"><span class="clue-k">${esc(c.label)}</span>`
-      + `<span class="clue-v">${esc(valueOf(p, c.key))}</span></span>`).join('');
+  // A deck can be too uniform to supply distractors — every protein in a
+  // Kinase deck has the same function. Widen to the whole proteome
+  // rather than show a question with one option.
+  if (others.length < 3) {
+    const wide = new Map();
+    for (const q of S.all) {
+      if (!hasValue(q, col.key)) continue;
+      const k = keyOf(q, col.key);
+      if (k !== answerKey && !wide.has(k)) wide.set(k, valueOf(q, col.key));
+      if (wide.size > 80) break;
+    }
+    others = others.concat(
+      sample(Array.from(wide.values()).filter((v) => others.indexOf(v) === -1),
+             3 - others.length));
+  }
 
-    // A distractor has to be distinguishable from the answer on at least
-    // one clue shown, or the question has more than one right answer.
+  // Two options is a coin flip. Below three, there is no question here.
+  if (others.length < 2) return null;
+  return shuffle(others.map((v) => ({ label: v, ok: false }))
+    .concat([{ label: answer, ok: true }]));
+}
+
+/* The clue block, shared by both directions.
+   `skip` is the column being asked — showing it would be the answer. */
+function clueBlock(p, members, skip) {
+  const pointless = pointlessColumns(members, p);
+  const cols = clueColumns(p).filter(
+    (c) => c.key !== skip && !pointless.has(c.key));
+  // Most discriminating first: a clue three quarters of the deck shares
+  // is a wasted line.
+  const ranked = cols
+    .map((c) => ({ c, share: deckShare(members, p, c.key) }))
+    .sort((a, b) => a.share - b.share)
+    .map((r) => r.c);
+  return ranked.slice(0, MAX_CLUES);
+}
+
+function renderClues(p, cols) {
+  return cols.map((c) =>
+    `<span class="clue"><span class="clue-k">${esc(c.label)}</span>`
+    + `<span class="clue-v">${esc(valueOf(p, c.key))}</span></span>`).join('');
+}
+
+function buildCard(depth) {
+  const sess = S.session;
+  if (!sess || !sess.queue.length) return null;
+  if ((depth || 0) > 40) return null;      // never recurse the queue away
+  const acc = sess.queue[0];
+  const p = db().byAccession.get(acc);
+  if (!p) { sess.queue.shift(); return buildCard((depth || 0) + 1); }
+
+  const members = deckMembers();
+  const pointless = pointlessColumns(members, p);
+
+  // Questions worth asking of THIS protein in THIS deck.
+  let asks = askableColumns(p).filter((c) => !pointless.has(c.key));
+  // If the deck is so uniform that everything is redundant, fall back to
+  // the unfiltered list rather than dropping the protein entirely.
+  if (!asks.length) asks = askableColumns(p);
+
+  const wants = (d) => {
+    if (d === 'g2n') return !!p.n;
+    if (d === 'p2a') return asks.length > 0;
+    if (d === 'a2p') return clueColumns(p).length > 0;
+    return false;
+  };
+  const dirs = S.settings.dirs.filter(wants);
+  if (!dirs.length) { sess.queue.shift(); return buildCard((depth || 0) + 1); }
+  const dir = dirs[Math.floor(Math.random() * dirs.length)];
+
+  if (dir === 'a2p' || dir === 'g2n') {
+    // Attributes in, protein out. g2n folds into the same shape: naming
+    // the protein from its gene symbol is the same question with the
+    // symbol as an extra clue, and it spares a second card layout.
+    const cols = clueBlock(p, members, null);
+    const clues = renderClues(p, cols);
+
+    // A distractor has to be distinguishable from the answer on a clue
+    // that is actually shown, or the question has more than one right
+    // answer.
     const differs = (q) => cols.some((c) =>
-      !hasValue(q, c.key) || valueOf(q, c.key) !== valueOf(p, c.key));
+      !hasValue(q, c.key) || keyOf(q, c.key) !== keyOf(p, c.key));
     let pool = members.filter((q) => q.a !== p.a && differs(q));
     if (pool.length < 3) pool = members.filter((q) => q.a !== p.a);
+    if (pool.length < 2) { sess.queue.shift(); return buildCard((depth || 0) + 1); }
     const opts = shuffle(sample(pool, 3).concat([p]));
     return {
       p, dir, kicker: 'Which protein?',
@@ -700,62 +837,27 @@ function buildCard() {
     };
   }
 
-  // Protein -> attribute
-  const cols = askableColumns(p);
-  const col = cols[Math.floor(Math.random() * cols.length)];
-  const answer = valueOf(p, col.key);
-  let choices = null;
-
-  if (S.settings.mc && col.closed) {
-    const values = new Set();
-    S.deck.accs.forEach((a) => {
-      const q = db().byAccession.get(a);
-      if (q && hasValue(q, col.key)) values.add(valueOf(q, col.key));
-    });
-    values.delete(answer);
-    let others;
-    if (col.key === 'fn') {
-      // Distractors from the same amber family first. The game already
-      // groups Kinase/Protease/Phosphatase as "Enzyme" and
-      // Receptor/Signalling/Immune as "Signalling"; reusing that here
-      // turns "Protease / Phosphatase / Ion channel / Signalling" —
-      // where the answer is the only plausible one — into a choice
-      // between four things it could actually be. A near miss is where
-      // the learning is.
-      const groups = (db().db && db().db.functionGroups) || {};
-      const near = Array.from(values).filter(
-        (v) => groups[v] && groups[v] === groups[answer]);
-      const far = Array.from(values).filter((v) => near.indexOf(v) === -1);
-      others = sample(near, 3);
-      if (others.length < 3) {
-        others = others.concat(sample(far, 3 - others.length));
-      }
-    } else {
-      others = sample(Array.from(values), 3);
-    }
-    // A deck can be too uniform to supply distractors — every protein in
-    // a "Kinase" deck has the same function. Fall back to the whole
-    // proteome rather than showing a question with one option.
-    if (others.length < 3) {
-      const wide = new Set();
-      for (const q of S.all) {
-        if (hasValue(q, col.key)) wide.add(valueOf(q, col.key));
-        if (wide.size > 60) break;
-      }
-      wide.delete(answer);
-      others = sample(Array.from(wide), 3);
-    }
-    if (others.length) {
-      choices = shuffle(others.map((v) => ({ label: v, ok: false }))
-        .concat([{ label: answer, ok: true }]));
-    }
+  // Protein -> attribute. Try the columns in random order and take the
+  // first that can actually be made into a question.
+  shuffle(asks);
+  for (const col of asks) {
+    const choices = optionsFor(p, col, members);
+    if (!choices) continue;
+    return {
+      p, dir, kicker: p.g,
+      prompt: col.q,
+      sub: esc(p.n),
+      // The same clue block the other direction uses. Asking "where in
+      // the cell is it?" with nothing else on screen is a memory test;
+      // with its function and pathway alongside it is a question you can
+      // reason about, which is the whole point of a training mode.
+      clues: renderClues(p, clueBlock(p, members, col.key)),
+      answer: valueOf(p, col.key),
+      choices, col,
+    };
   }
-
-  return {
-    p, dir, kicker: p.g,
-    prompt: col.q,
-    sub: esc(p.n), answer, choices, col,
-  };
+  sess.queue.shift();
+  return buildCard((depth || 0) + 1);
 }
 
 function nextCard() {
@@ -774,41 +876,33 @@ function renderCard(card) {
   $('train-done').hidden = true;
   $('card').hidden = false;
   $('card-kicker').textContent = card.kicker;
-  $('card-prompt').innerHTML = card.clues
-    ? `<span class="clues">${card.clues}</span>`
-    : esc(card.prompt);
+  $('card-prompt').innerHTML = esc(card.prompt);
+  $('card-prompt').hidden = !card.prompt;
   $('card-sub').innerHTML = card.sub || '';
   $('card-sub').hidden = !card.sub;
+  // Both directions now carry the clue block. Asking "where in the cell
+  // is it?" with nothing but the name on screen is a memory test; with
+  // the function and pathway beside it, it is a question you can reason
+  // your way to.
+  $('card-clues').innerHTML = card.clues || '';
+  $('card-clues').hidden = !card.clues;
   $('card-feedback').hidden = true;
   $('card-next-wrap').hidden = true;
 
+  // Every card is multiple choice. The self-graded flip is gone: "did
+  // you get it right?" is answered generously by everyone, so it graded
+  // nothing and moved cards up the Leitner boxes on good intentions.
   const choices = $('card-choices');
-  const flip = $('card-flip');
-  if (card.choices) {
-    choices.hidden = false;
-    flip.hidden = true;
-    // Numbered A-to-D style badges. They read as a quiz rather than as
-    // four anonymous buttons, and they double as the label for the 1-4
-    // keyboard shortcuts, which were already wired but invisible.
-    choices.innerHTML = card.choices.map((c, i) =>
-      `<button class="choice" data-i="${i}">`
-      + `<span class="choice-key" aria-hidden="true">${i + 1}</span>`
-      + `<span class="choice-body">`
-      + `<span class="choice-label">${esc(c.label)}</span>`
-      + (c.sub ? `<span class="choice-sub">${esc(c.sub)}</span>` : '')
-      + `</span></button>`).join('');
-  } else {
-    // Emptied, not merely hidden. A hidden element still answers
-    // querySelector and can still be clicked by script, and the old
-    // buttons would then be read against a card that has no choices.
-    choices.innerHTML = '';
-    choices.hidden = true;
-    flip.hidden = false;
-    $('card-reveal').hidden = false;
-    $('card-answer').hidden = true;
-    $('card-answer').textContent = card.answer;
-    $('card-grade').hidden = true;
-  }
+  choices.hidden = false;
+  // Numbered badges. They read as a quiz rather than as four anonymous
+  // buttons, and they label the 1-4 keyboard shortcuts.
+  choices.innerHTML = card.choices.map((c, i) =>
+    `<button class="choice" data-i="${i}">`
+    + `<span class="choice-key" aria-hidden="true">${i + 1}</span>`
+    + `<span class="choice-body">`
+    + `<span class="choice-label">${esc(c.label)}</span>`
+    + (c.sub ? `<span class="choice-sub">${esc(c.sub)}</span>` : '')
+    + `</span></button>`).join('');
 
   const st = S.srs[card.p.a];
   const box = st ? st.b : 0;
@@ -869,15 +963,12 @@ function buildSettingsUI() {
   $('set-cols').innerHTML = COLUMNS.filter((c) => c.ask).map((c) =>
     `<label class="setting-check"><input type="checkbox" data-col="${c.key}"`
     + `${S.settings.cols.includes(c.key) ? ' checked' : ''}>`
-    + `<span>${esc(c.label)}`
-    + `<em>${esc(c.closed ? 'multiple choice' : 'self-graded')}</em>`
-    + `</span></label>`).join('');
+    + `<span>${esc(c.label)}<em>${esc(c.q)}</em></span></label>`).join('');
   $('set-dirs').innerHTML = DIRECTIONS.map((d) =>
     `<label class="setting-check"><input type="checkbox" data-dir="${d.key}"`
     + `${S.settings.dirs.includes(d.key) ? ' checked' : ''}>`
     + `<span>${esc(d.label)}<em>${esc(d.note)}</em></span></label>`).join('');
   $('set-limit').value = String(S.settings.limit);
-  $('set-mc').checked = !!S.settings.mc;
 }
 
 function readSettings() {
@@ -889,7 +980,6 @@ function readSettings() {
   S.settings.cols = cols.length ? cols : DEFAULTS.cols.slice();
   S.settings.dirs = dirs.length ? dirs : DEFAULTS.dirs.slice();
   S.settings.limit = parseInt($('set-limit').value, 10) || 0;
-  S.settings.mc = $('set-mc').checked;
   S.settings.v = SETTINGS_VERSION;
   if (!cols.length || !dirs.length) buildSettingsUI();
   save(SET_KEY, S.settings);
@@ -1005,15 +1095,6 @@ function wire() {
     });
     answerCard(!!picked.ok);
   });
-  on($('card-reveal'), 'click', () => {
-    $('card-reveal').hidden = true;
-    $('card-answer').hidden = false;
-    $('card-grade').hidden = false;
-  });
-  on($('card-grade'), 'click', (e) => {
-    const b = e.target.closest('[data-grade]');
-    if (b) answerCard(b.dataset.grade === 'got');
-  });
   on($('card-next'), 'click', () => {
     $('card-choices').classList.remove('answered');
     nextCard();
@@ -1024,8 +1105,6 @@ function wire() {
     if (!$('settings-backdrop').hidden || !$('deck-backdrop').hidden) return;
     if (e.key === 'Enter' && !$('card-next-wrap').hidden) {
       e.preventDefault(); $('card-next').click();
-    } else if (e.key === ' ' && !$('card-reveal').hidden) {
-      e.preventDefault(); $('card-reveal').click();
     } else if (/^[1-4]$/.test(e.key) && !$('card-choices').hidden) {
       const node = $('card-choices').children[+e.key - 1];
       if (node) node.click();

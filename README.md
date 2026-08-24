@@ -180,14 +180,14 @@ back.
 
 Six attributes survived, and each has a reason:
 
-| Attribute | Form | Why it earns a card |
-| --- | --- | --- |
-| Function | multiple choice | The single most useful fact about a protein |
-| Localization | self-graded | Recallable, and reasonable from function |
-| Pathway | self-graded | The process it belongs to |
-| Family | self-graded | Real working knowledge — "it's a serpin" |
-| Conservation | multiple choice | Coarsened to three buckets, see below |
-| Disease | self-graded | The *named* disease, not a yes/no |
+| Attribute | Why it earns a card |
+| --- | --- |
+| Function | The single most useful fact about a protein |
+| Localization | Recallable, and reasonable from function |
+| Pathway | The process it belongs to |
+| Family | Real working knowledge — "it's a serpin" |
+| Conservation | Coarsened to three buckets, see below |
+| Disease | The *named* disease, not a yes/no |
 
 Two changes to what was there before are worth spelling out.
 
@@ -205,7 +205,42 @@ to?" is a real question with a real answer. The yes/no survives as a *clue*
 in the other direction, where being one of four attributes is exactly what
 it is good for.
 
+### A question the deck already answers is not a question
+
+A deck of Function = DNA repair asking "DDB2 — what kind of protein is
+it?" answers itself, and no amount of good distractors saves it. Two
+guards, because there are two ways it happens:
+
+- **Decks record what they were built on.** A function deck never asks
+  about function; a *field* deck never asks about pathway, because fields
+  are Reactome top-level pathways under another name; a deck made from a
+  Browse filter excludes every column the filter touched.
+- **And the rest is measured.** Every protein in a DNA repair deck sits
+  under the DNA Repair pathway, which no basis can know because nobody
+  filtered on it. So if 60% or more of the deck shares this protein's
+  value for a column, that column is dropped as a question and demoted as
+  a clue.
+
 ### Asking and telling are different jobs
+
+**Every card is multiple choice, and every card carries clues.** There is
+no self-graded flip: "did you get it right?" is answered generously by
+everyone, so it graded nothing and moved cards up the Leitner boxes on good
+intentions. And a card that asks "where in the cell is it?" with nothing but
+the name on screen is a memory test; with the function, pathway and
+conservation beside it, it is a question you can reason your way to, which
+is the difference between a quiz and a training tool. Up to six clues,
+most discriminating first.
+
+If a deck cannot supply at least two plausible wrong answers for a column,
+that column is skipped rather than asked with too few options.
+
+Options are deduplicated by *identity*, not spelling. Localization and
+pathway are sets whose display order comes from annotation weight, so two
+proteins can carry the same pair the other way round — one card offered
+"Immune System · DNA Repair" and "DNA Repair · Immune System" as separate
+options, one of which had to be marked wrong for being the right answer
+written backwards.
 
 Two directions ship on by default and mix: *protein → attribute* and
 *attributes → protein*, which is the game's own logic as a flashcard. An
